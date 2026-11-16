@@ -1,0 +1,39 @@
+name: Tests
+
+# Runs the end-to-end tests in tests/ on every push and every pull request.
+# They open index.html in headless Chromium and check that it shows the
+# right frames. See "Running the tests" in the README.
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      # The test clips are made with ffmpeg at test time. None are stored in the repository.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install the test runner
+        run: npm ci
+
+      - name: Install the browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the tests
+        run: npm test

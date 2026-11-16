@@ -10,3 +10,9 @@
 # Files created by macOS and Windows
 .DS_Store
 Thumbs.db
+
+# Automated tests: installed packages, generated test clips and reports
+tests/node_modules/
+tests/.media/
+tests/test-results/
+tests/playwright-report/

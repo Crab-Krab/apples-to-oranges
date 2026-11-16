@@ -433,7 +433,7 @@ function makeSlot() {
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
     tex: null, texValid: false, dirty: 0, pendingSeek: null, token: 0,
-    presented: null, rvfcArmed: false,
+    presented: null, texTime: null, rvfcArmed: false,
   };
   v.addEventListener('loadedmetadata', () => onMeta(sl));
   v.addEventListener('durationchange', () => {
@@ -675,9 +675,13 @@ function probeFps(url) {
       resolve(estimateFps(times));
     };
     const timer = setTimeout(finish, 4000);
+    // Collect at least 45 frames covering at least 1 second of video. WebM
+    // and MKV round frame times to whole milliseconds, and over a shorter
+    // stretch that rounding is enough to confuse 60 with 59.94 fps.
     const cb = (now, md) => {
       times.push(md.mediaTime);
-      if (times.length >= 45) finish(); else v.requestVideoFrameCallback(cb);
+      const span = times[times.length - 1] - times[0];
+      if (times.length >= 45 && span >= 1) finish(); else v.requestVideoFrameCallback(cb);
     };
     v.addEventListener('ended', finish);
     v.addEventListener('error', finish);
@@ -690,23 +694,49 @@ function probeFps(url) {
   });
 }
 function estimateFps(times) {
-  const d = [];
+  const gaps = [];
   for (let i = 1; i < times.length; i++) {
     const dt = times[i] - times[i - 1];
-    if (dt > 1e-4 && dt < 1) d.push(dt);
+    if (dt > 1e-4 && dt < 1) gaps.push(dt);
   }
-  if (d.length < 4) return null;
-  // The shortest common gap is one frame. Longer gaps are skipped frames
-  // (2 frames, 3 frames...), so count how many frames each gap covers.
-  const sorted = [...d].sort((a, b) => a - b);
-  const base = sorted[Math.floor(sorted.length * 0.1)];
-  let frames = 0, span = 0;
-  for (const x of d) {
-    const k = Math.round(x / base);
-    if (k >= 1 && k <= 8 && Math.abs(x / base - k) < 0.25) { frames += k; span += x; }
+  if (gaps.length < 4) return null;
+  // First guess at one frame's length: the shortest common gap.
+  const sorted = [...gaps].sort((a, b) => a - b);
+  let frame = sorted[Math.floor(sorted.length * 0.1)];
+  // Then refine it twice. The second pass counts long gaps (several skipped
+  // frames) using the better guess from the first.
+  for (let pass = 0; pass < 2; pass++) {
+    frame = fitFrameLength(times, frame);
+    if (!frame) return null;
   }
-  if (!frames || !span) return null;
-  return snapFps(frames / span);
+  return snapFps(1 / frame);
+}
+// Number the frames we saw: a gap of k frames (skipped frames) adds k. Then
+// draw the best straight line through "time against frame number" (a least
+// squares fit). Its slope is the length of one frame. Because every frame
+// counts, not just the first and last, rounded frame times average out.
+// A gap that is not a whole number of frames starts a new run, and each run
+// gets its own starting point.
+function fitFrameLength(times, frame) {
+  let sxy = 0, sxx = 0, run = [[0, times[0]]];
+  const addRun = () => {
+    if (run.length < 2) return;
+    const mx = run.reduce((s, p) => s + p[0], 0) / run.length;
+    const my = run.reduce((s, p) => s + p[1], 0) / run.length;
+    for (const [x, y] of run) { sxy += (x - mx) * (y - my); sxx += (x - mx) * (x - mx); }
+  };
+  for (let i = 1; i < times.length; i++) {
+    const dt = times[i] - times[i - 1];
+    const k = Math.round(dt / frame);
+    if (k >= 1 && k <= 8 && Math.abs(dt / frame - k) < 0.25) {
+      run.push([run[run.length - 1][0] + k, times[i]]);
+    } else {
+      addRun();
+      run = [[0, times[i]]];
+    }
+  }
+  addRun();
+  return sxx > 0 && sxy > 0 ? sxy / sxx : null;
 }
 function snapFps(raw) {
   let best = null, bestErr = Infinity;
@@ -751,7 +781,7 @@ function loadFile(i, file) {
     file, url: URL.createObjectURL(file), codec: null, codecHint: null,
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
-    texValid: false, pendingSeek: null, presented: null,
+    texValid: false, pendingSeek: null, presented: null, texTime: null,
   });
   sl.video.src = sl.url;
   renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
@@ -959,6 +989,17 @@ function frameCount() {
 }
 const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
 
+// The time of the frame on screen during playback. Best is the time of the
+// picture we last drew (texTime). Next best is the last frame the browser
+// reported (presented), which at 60 fps can be one frame older than the
+// picture. The video's own clock is the fallback. A time far from the
+// clock is left over from before a jump and is ignored.
+function timeOnScreen(sl) {
+  const now = sl.video.currentTime;
+  for (const t of [sl.texTime, sl.presented]) if (t !== null && Math.abs(t - now) < 0.5) return t;
+  return now;
+}
+
 // Seek to the middle of a frame. Seeking to its exact start can land on
 // the previous frame because of rounding, the middle is always safe.
 function frameMid(sl, n) {
@@ -1040,8 +1081,7 @@ function pause() {
   a.video.pause();
   B().video.pause();
   // Snap both videos to the frame that was on screen.
-  const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
-  seekAll(frameAt(t, fpsOf(a)));
+  seekAll(frameAt(timeOnScreen(a), fpsOf(a)));
   updatePlayIcon();
 }
 
@@ -1142,11 +1182,9 @@ function updateTimeUI() {
   const fa = fpsOf(a);
   let n, m;
   if (S.playing) {
-    const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
-    n = Math.min(frameAt(t, fa), frameCount() - 1);
+    n = Math.min(frameAt(timeOnScreen(a), fa), frameCount() - 1);
     if (b.ready) {
-      const tb = b.presented !== null && Math.abs(b.presented - b.video.currentTime) < 0.5 ? b.presented : b.video.currentTime;
-      m = frameAt(tb, fpsOf(b));
+      m = frameAt(timeOnScreen(b), fpsOf(b));
     }
   } else {
     n = S.frame;
@@ -1262,13 +1300,41 @@ function makeTex() {
   return t;
 }
 
+// The time stamp of the frame the video is showing right now, in seconds,
+// or null if the browser cannot tell us. A VideoFrame is a snapshot of
+// the current picture together with its time stamp.
+const HAS_VIDEOFRAME = typeof VideoFrame === 'function';
+function frameStamp(v) {
+  if (!HAS_VIDEOFRAME) return null;
+  try {
+    const f = new VideoFrame(v);
+    const t = f.timestamp;
+    f.close();
+    return typeof t === 'number' ? t / 1e6 : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 let uploadErrorShown = false;
 function uploadTex(sl) {
   const v = sl.video;
   if (!gl || v.readyState < 2 || !v.videoWidth) return false;
   gl.bindTexture(gl.TEXTURE_2D, sl.tex);
   try {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+    // Record which frame ends up in the texture. During playback the video
+    // can move to its next frame at any moment, even between two lines of
+    // code, so the time stamp is read just before and just after the copy.
+    // If both agree, the copied picture is that frame. If they differ, a
+    // new frame arrived during the copy: copy again (rarely needed twice).
+    let before = frameStamp(v), after = null;
+    for (let tries = 0; tries < 3; tries++) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+      after = frameStamp(v);
+      if (before === after) break;
+      before = after;
+    }
+    sl.texTime = before !== null && before === after ? before : null;
     sl.texValid = true;
     return true;
   } catch (e) {
@@ -1425,7 +1491,7 @@ function fatal(msg) {
 // The main loop runs once per screen refresh.
 function loop() {
   requestAnimationFrame(loop);
-  if (S.playing) { syncStep(); updateTimeUI(); }
+  if (S.playing) syncStep();
   let uploaded = false;
   for (const sl of S.slots) {
     if (!sl.ready) continue;
@@ -1434,6 +1500,8 @@ function loop() {
       if (sl.dirty > 0) sl.dirty--;
     }
   }
+  // After the copy, so the frame number matches the picture drawn below.
+  if (S.playing) updateTimeUI();
   if (uploaded || S.needsRender) { S.needsRender = false; draw(); }
   // Show a "Decoding…" badge while a jump to a new frame is still in progress,
   // so the picture is never mistaken for the frame number shown below.
@@ -1731,7 +1799,7 @@ setOffset(0);
 requestAnimationFrame(loop);
 
 // Exposed only to make automated testing easier. Not needed for normal use.
-window.__a2o = { S, seekAll, play, pause, step, setMode, zoomAt, fitNow, oneToOne, handleFiles, fpsOf };
+window.__a2o = { S, seekAll, play, pause, step, setMode, zoomAt, fitNow, oneToOne, handleFiles, fpsOf, estimateFps, STD_FPS };
 })();
 </script>
 </body>

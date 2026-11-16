@@ -1,0 +1,14 @@
+{
+  "name": "apples-to-oranges-tests",
+  "private": true,
+  "description": "End-to-end tests for index.html. Nothing in this folder is needed to use the tool.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
