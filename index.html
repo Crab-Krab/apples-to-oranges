@@ -658,7 +658,9 @@ async function sniffCodec(file) {
    a hidden, muted copy of the file at half speed for a moment and record
    the timestamp of every frame that gets shown.
    --------------------------------------------------------------------- */
-function probeFps(url) {
+// `rate` is the playback speed, `minFrames` and `minSpan` (seconds of
+// video) say when enough frames have been seen.
+function probeFps(url, rate = 0.5, minFrames = 45, minSpan = 1, timeoutMs = 4000) {
   return new Promise((resolve) => {
     if (!HAS_RVFC) return resolve(null);
     const v = document.createElement('video');
@@ -674,19 +676,19 @@ function probeFps(url) {
       v.remove();
       resolve(estimateFps(times));
     };
-    const timer = setTimeout(finish, 4000);
+    const timer = setTimeout(finish, timeoutMs);
     // Collect at least 45 frames covering at least 1 second of video. WebM
     // and MKV round frame times to whole milliseconds, and over a shorter
     // stretch that rounding is enough to confuse 60 with 59.94 fps.
     const cb = (now, md) => {
       times.push(md.mediaTime);
       const span = times[times.length - 1] - times[0];
-      if (times.length >= 45 && span >= 1) finish(); else v.requestVideoFrameCallback(cb);
+      if (times.length >= minFrames && span >= minSpan) finish(); else v.requestVideoFrameCallback(cb);
     };
     v.addEventListener('ended', finish);
     v.addEventListener('error', finish);
     v.addEventListener('loadedmetadata', () => {
-      v.playbackRate = 0.5; // half speed makes it less likely the screen skips frames
+      v.playbackRate = rate; // slower than real time makes it less likely the screen skips frames
       v.requestVideoFrameCallback(cb);
       v.play().catch(finish);
     }, { once: true });
@@ -820,7 +822,17 @@ async function detectFps(sl) {
   const token = sl.token;
   sl.detecting = true;
   renderSlots();
-  const fps = await probeFps(sl.url);
+  let fps = await probeFps(sl.url);
+  // At half speed a 240 fps video still shows 120 frames a second, more than
+  // a 60 Hz screen can present. The browser then reports every second frame
+  // and the rate looks halved. If frames came faster than about 40 a second,
+  // measure again slowly enough for about 10 a second. Fewer frames and a
+  // shorter stretch of video are needed at such high rates.
+  if (fps && token === sl.token && fps * 0.5 > 40) {
+    const slow = Math.max(1 / 32, 10 / fps);
+    const again = await probeFps(sl.url, slow, 45, 0.15, 12000);
+    if (again) fps = again;
+  }
   if (token !== sl.token) return;
   changeFps(sl, () => {
     sl.detecting = false;
@@ -1250,10 +1262,33 @@ void main() {
     c = uHas.y > 0.5 ? texture2D(uB, uv).rgb : empty;
   } else {
     if (uHas.x < 0.5 || uHas.y < 0.5) { gl_FragColor = vec4(empty, 1.0); return; }
-    // When zoomed in, compare one Original pixel at a time so the result
-    // doesn't change as you zoom.
-    vec2 suv = uXf.x >= 1.0 ? (floor(uv * uImg) + 0.5) / uImg : uv;
-    vec3 d = abs(texture2D(uA, suv).rgb - texture2D(uB, suv).rgb) * uBoost;
+    vec3 d;
+    if (uXf.x >= 1.0) {
+      // Zoomed in: compare one Original pixel at a time, so the result
+      // doesn't change as you zoom.
+      vec2 suv = (floor(uv * uImg) + 0.5) / uImg;
+      d = abs(texture2D(uA, suv).rgb - texture2D(uB, suv).rgb);
+    } else {
+      // Zoomed out: one screen pixel covers several video pixels. Compare
+      // every one of them and keep the largest difference, so a change in a
+      // single video pixel can't fall between samples. A video pixel belongs
+      // to the screen pixel that contains its centre, so each is checked
+      // exactly once. Beyond 16 x 16 per screen pixel, samples are spread out.
+      vec2 p0 = (local - 0.5 - uXf.yz) / uXf.x;           // screen pixel's corner, in video pixels
+      vec2 k0 = ceil(p0 - 0.5);                             // first video pixel inside it
+      vec2 n = ceil(p0 + 1.0 / uXf.x - 0.5) - k0;           // how many, per direction
+      vec2 stride = max(vec2(1.0), ceil(n / 16.0));
+      d = vec3(0.0);
+      for (int j = 0; j < 16; j++) {
+        if (float(j) * stride.y >= n.y) break;
+        for (int i = 0; i < 16; i++) {
+          if (float(i) * stride.x >= n.x) break;
+          vec2 suv = (clamp(k0 + vec2(float(i), float(j)) * stride, vec2(0.0), uImg - 1.0) + 0.5) / uImg;
+          d = max(d, abs(texture2D(uA, suv).rgb - texture2D(uB, suv).rgb));
+        }
+      }
+    }
+    d *= uBoost;
     float m = max(d.r, max(d.g, d.b));
     if (uStyle == 0) c = heat(m);
     else if (uStyle == 1) c = vec3(clamp(m, 0.0, 1.0));

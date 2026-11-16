@@ -211,6 +211,25 @@ function installPageHelpers() {
     });
   };
 
+  // How many canvas pixels inside the picture are brighter than `level`
+  // (0 to 255), counting every pixel.
+  T.litPixels = async (level) => {
+    await T.whenSettled();
+    return T.afterDraw(() => {
+      const view = document.getElementById('gl');
+      const gl = drawingOf(view);
+      const box = T.pictureBox(0);
+      const x0 = Math.max(0, Math.floor(box.left)), x1 = Math.min(view.width, Math.ceil(box.left + box.w * box.scale));
+      const y0 = Math.max(0, Math.floor(box.top)), y1 = Math.min(view.height, Math.ceil(box.top + box.h * box.scale));
+      const w = x1 - x0, h = y1 - y0;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(x0, view.height - y1, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let lit = 0;
+      for (let p = 0; p < px.length; p += 4) if (Math.max(px[p], px[p + 1], px[p + 2]) > level) lit++;
+      return { lit, total: w * h, zoom: box.scale };
+    });
+  };
+
   // Play until the Original has reached frame `target` (or a later one),
   // pause, and resolve with the frame that was on screen at that moment.
   //
