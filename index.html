@@ -18,7 +18,6 @@
     --line: #4a4a4a;
     --text: #e4e4e4;
     --text-dim: #a0a0a0;
-    --text-faint: #7a7a7a;
     --viewer: #1b1b1b;
     --active-bg: #d6d6d6;
     --active-text: #1b1b1b;
@@ -443,6 +442,11 @@ function makeSlot() {
   v.addEventListener('error', () => onVideoError(sl));
   v.addEventListener('loadeddata', () => { sl.dirty = 2; armRVFC(sl); requestRender(); });
   v.addEventListener('ended', () => { if (sl === A() && S.playing) onEnded(); });
+  // Media keys, a headset button or the system's media controls can pause
+  // or play the Original directly. Keep the app's own state in step. A pause
+  // at the end of the video is left to the "ended" handler.
+  v.addEventListener('pause', () => { if (sl === A() && S.playing && !v.ended) pause(); });
+  v.addEventListener('play', () => { if (sl === A() && !S.playing) play(); });
   armRVFC(sl);
   return sl;
 }
@@ -624,7 +628,8 @@ async function sniffCodec(file) {
       else if (size === 0) size = file.size - off;
       if (size < 8) break;
       if (type === 'moov') {
-        const buf = new Uint8Array(await file.slice(off, off + Math.min(size, 64 << 20)).arrayBuffer());
+        // The sample description sits near the start of the header, so 8 MB is plenty.
+        const buf = new Uint8Array(await file.slice(off, off + Math.min(size, 8 << 20)).arrayBuffer());
         for (let j = 0; j + 20 < buf.length; j++) {
           if (buf[j] === 0x73 && buf[j + 1] === 0x74 && buf[j + 2] === 0x73 && buf[j + 3] === 0x64) { // "stsd"
             const fc = String.fromCharCode(buf[j + 16], buf[j + 17], buf[j + 18], buf[j + 19]);
@@ -760,10 +765,13 @@ function handleFiles(fileList, target) {
   if (vids.length) files = vids;
   if (!files.length) return;
   if (files.length >= 2) {
-    const [big, small] = files.slice(0, 2).sort((p, q) => q.size - p.size);
+    // Sort all of them first, so the largest file is never the one left out.
+    const [big, small, ...rest] = [...files].sort((p, q) => q.size - p.size);
     loadFile(0, big);
     loadFile(1, small);
-    toast('Guessed the larger file is the Original. Click Swap if that is wrong.', 5000);
+    let msg = 'Guessed the larger file is the Original. Click Swap if that is wrong.';
+    if (rest.length) msg += ' Only two videos can be compared at once, so ' + rest.length + ' smaller file' + (rest.length > 1 ? 's were' : ' was') + ' left out: ' + rest.map((f) => f.name).join(', ') + '.';
+    toast(msg, rest.length ? 9000 : 5000);
     return;
   }
   const f = files[0];
@@ -1057,6 +1065,7 @@ function onSeeked(sl) {
    --------------------------------------------------------------------- */
 function play() {
   const a = A(), b = B();
+  if (needOriginal()) return;
   if (!a.ready || S.playing) return;
   if (S.frame >= frameCount() - 1) seekAll(0);
   S.playing = true;
@@ -1130,7 +1139,16 @@ function syncStep() {
   if (Math.abs(vb.playbackRate - rate) > 0.003 * S.speed) vb.playbackRate = rate;
 }
 
+// Stepping and playback follow the Original. With only an Encoded video
+// loaded there is no timeline yet, so say so instead of doing nothing.
+function needOriginal() {
+  if (A().ready || !B().ready) return false;
+  toast('Load an Original video too. Stepping and playback follow the Original.', 4000);
+  return true;
+}
+
 function step(delta) {
+  if (needOriginal()) return;
   if (!A().ready && !B().ready) return;
   if (S.playing) pause();
   seekAll(S.frame + delta);
@@ -1652,7 +1670,10 @@ function showCodecHelp(sl) {
   $('codecErr').innerHTML = sl && sl.error
     ? '<div class="errbox"><b>' + esc(role) + ': ' + esc(sl.file ? sl.file.name : '') + '</b><br>' + esc(sl.error) +
       (sl.codec ? '<br>This file\'s video codec looks like <b>' + esc(sl.codec) + '</b>.' : '') +
-      (sl.codecHint ? '<br>' + esc(sl.codecHint) : '') + '</div>'
+      (sl.codecHint ? '<br>' + esc(sl.codecHint) : '') +
+      (sl.file && /\.(ts|mts|m2ts)$/i.test(sl.file.name)
+        ? '<br>MPEG transport stream files (.ts, .mts, .m2ts) don\'t play in most browsers. Repackaging the file as MP4 usually fixes it without re-encoding, for example: <code>ffmpeg -i input.ts -c copy output.mp4</code>'
+        : '') + '</div>'
     : '';
   openModal('codecModal');
 }
@@ -1712,6 +1733,9 @@ for (const i of [0, 1]) {
   el.addEventListener('drop', (e) => {
     e.preventDefault(); e.stopPropagation();
     el.classList.remove('dragover');
+    // This drop never reaches the page-wide handler below (stopPropagation),
+    // so reset its drag counter here, or the "drop" overlay can get stuck.
+    dragDepth = 0;
     viewer.classList.remove('dragover');
     if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files, i);
   });
