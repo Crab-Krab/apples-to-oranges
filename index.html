@@ -675,9 +675,13 @@ function probeFps(url) {
       resolve(estimateFps(times));
     };
     const timer = setTimeout(finish, 4000);
+    // Collect at least 45 frames covering at least 1 second of video. WebM
+    // and MKV round frame times to whole milliseconds, and over a shorter
+    // stretch that rounding is enough to confuse 60 with 59.94 fps.
     const cb = (now, md) => {
       times.push(md.mediaTime);
-      if (times.length >= 45) finish(); else v.requestVideoFrameCallback(cb);
+      const span = times[times.length - 1] - times[0];
+      if (times.length >= 45 && span >= 1) finish(); else v.requestVideoFrameCallback(cb);
     };
     v.addEventListener('ended', finish);
     v.addEventListener('error', finish);
@@ -690,23 +694,49 @@ function probeFps(url) {
   });
 }
 function estimateFps(times) {
-  const d = [];
+  const gaps = [];
   for (let i = 1; i < times.length; i++) {
     const dt = times[i] - times[i - 1];
-    if (dt > 1e-4 && dt < 1) d.push(dt);
+    if (dt > 1e-4 && dt < 1) gaps.push(dt);
   }
-  if (d.length < 4) return null;
-  // The shortest common gap is one frame. Longer gaps are skipped frames
-  // (2 frames, 3 frames...), so count how many frames each gap covers.
-  const sorted = [...d].sort((a, b) => a - b);
-  const base = sorted[Math.floor(sorted.length * 0.1)];
-  let frames = 0, span = 0;
-  for (const x of d) {
-    const k = Math.round(x / base);
-    if (k >= 1 && k <= 8 && Math.abs(x / base - k) < 0.25) { frames += k; span += x; }
+  if (gaps.length < 4) return null;
+  // First guess at one frame's length: the shortest common gap.
+  const sorted = [...gaps].sort((a, b) => a - b);
+  let frame = sorted[Math.floor(sorted.length * 0.1)];
+  // Then refine it twice. The second pass counts long gaps (several skipped
+  // frames) using the better guess from the first.
+  for (let pass = 0; pass < 2; pass++) {
+    frame = fitFrameLength(times, frame);
+    if (!frame) return null;
   }
-  if (!frames || !span) return null;
-  return snapFps(frames / span);
+  return snapFps(1 / frame);
+}
+// Number the frames we saw: a gap of k frames (skipped frames) adds k. Then
+// draw the best straight line through "time against frame number" (a least
+// squares fit). Its slope is the length of one frame. Because every frame
+// counts, not just the first and last, rounded frame times average out.
+// A gap that is not a whole number of frames starts a new run, and each run
+// gets its own starting point.
+function fitFrameLength(times, frame) {
+  let sxy = 0, sxx = 0, run = [[0, times[0]]];
+  const addRun = () => {
+    if (run.length < 2) return;
+    const mx = run.reduce((s, p) => s + p[0], 0) / run.length;
+    const my = run.reduce((s, p) => s + p[1], 0) / run.length;
+    for (const [x, y] of run) { sxy += (x - mx) * (y - my); sxx += (x - mx) * (x - mx); }
+  };
+  for (let i = 1; i < times.length; i++) {
+    const dt = times[i] - times[i - 1];
+    const k = Math.round(dt / frame);
+    if (k >= 1 && k <= 8 && Math.abs(dt / frame - k) < 0.25) {
+      run.push([run[run.length - 1][0] + k, times[i]]);
+    } else {
+      addRun();
+      run = [[0, times[i]]];
+    }
+  }
+  addRun();
+  return sxx > 0 && sxy > 0 ? sxy / sxx : null;
 }
 function snapFps(raw) {
   let best = null, bestErr = Infinity;
@@ -1769,7 +1799,7 @@ setOffset(0);
 requestAnimationFrame(loop);
 
 // Exposed only to make automated testing easier. Not needed for normal use.
-window.__a2o = { S, seekAll, play, pause, step, setMode, zoomAt, fitNow, oneToOne, handleFiles, fpsOf };
+window.__a2o = { S, seekAll, play, pause, step, setMode, zoomAt, fitNow, oneToOne, handleFiles, fpsOf, estimateFps, STD_FPS };
 })();
 </script>
 </body>
