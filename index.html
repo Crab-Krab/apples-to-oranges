@@ -433,7 +433,7 @@ function makeSlot() {
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
     tex: null, texValid: false, dirty: 0, pendingSeek: null, token: 0,
-    presented: null, texTime: null, rvfcArmed: false,
+    presented: null, texTime: null, rvfcArmed: false, mismatch: null,
   };
   v.addEventListener('loadedmetadata', () => onMeta(sl));
   v.addEventListener('durationchange', () => {
@@ -783,7 +783,7 @@ function loadFile(i, file) {
     file, url: URL.createObjectURL(file), codec: null, codecHint: null,
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
-    texValid: false, pendingSeek: null, presented: null, texTime: null,
+    texValid: false, pendingSeek: null, presented: null, texTime: null, mismatch: null,
   });
   sl.video.src = sl.url;
   renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
@@ -981,6 +981,11 @@ function updateWarnings() {
   for (const [i, sl] of S.slots.entries()) {
     if (sl.ready && sl.fpsFailed && !sl.manualFps) {
       out.push('Could not measure the ' + ROLES[i] + '\'s frame rate, so ' + FALLBACK_FPS + ' fps is assumed. Pick the right rate from its "Frame rate" menu.');
+    }
+    if (sl.ready && sl.mismatch) {
+      out.push('The ' + ROLES[i] + ' is showing its frame ' + sl.mismatch.got + ', not frame ' + sl.mismatch.want + ' as asked. ' +
+        'The file may be damaged or cut off, its audio may run longer than its video, it may have a variable frame rate, ' +
+        'or its frame rate may be set wrong. Frame numbers here are not reliable.');
     }
   }
   if (a.ready && b.ready) {
@@ -1577,6 +1582,35 @@ function loop() {
   // so the picture is never mistaken for the frame number shown below.
   const busy = !S.playing && S.slots.some((s) => s.ready && (s.video.seeking || s.pendingSeek !== null));
   if (busyEl.hidden === busy) busyEl.hidden = !busy;
+  if (!S.playing && !busy) verifyShownFrames();
+}
+
+// Check that each video really shows the frame that was asked for. It may
+// not: a damaged or cut-off file can only show its last good picture, a
+// file whose audio runs longer than its video has no pictures at the end,
+// and a variable frame rate file has frames off the expected grid. Needs
+// the time stamp of the copied picture (texTime), which browsers without
+// VideoFrame don't give, so there the check is skipped.
+function verifyShownFrames() {
+  let changed = false;
+  for (const [i, sl] of S.slots.entries()) {
+    if (!sl.ready || sl.dirty > 0 || sl.detecting || sl.texTime === null) continue;
+    const fps = fpsOf(sl);
+    const want = i === 0 ? S.frame : S.encFrame;
+    let result = null;
+    // Skip Encoded frames before its start or past its end (an offset, or a
+    // shorter file): there is nothing to show there, and other warnings cover it.
+    if (want >= 0 && want < Math.round(sl.duration * fps)) {
+      const got = Math.max(0, Math.round(sl.texTime * fps));
+      if (got !== want) result = { want, got };
+    }
+    const old = sl.mismatch;
+    if ((old === null) !== (result === null) || (old && (old.want !== result.want || old.got !== result.got))) {
+      sl.mismatch = result;
+      changed = true;
+    }
+  }
+  if (changed) updateWarnings();
 }
 const busyEl = $('busy');
 
