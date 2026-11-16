@@ -140,11 +140,40 @@ const checker = {
   ],
 };
 
+// A 240 fps clip. Played at half speed it still shows 120 frames a second,
+// faster than a 60 Hz screen, which used to make it measure as 120 fps.
+const fast = barcodeClip({ label: '240', num: 240, den: 1, fps: 240 }, CONTAINERS[0], { name: 'barcode-240fps' });
+
+// Two lossless 1920x1080 pictures, identical except for isolated single
+// pixels, one every 16 pixels in each direction (120 x 67 = 8,040 of them).
+// Shown zoomed out, every one of them must light up in the Difference view
+// (see difference-sampling.spec.js).
+const DOT_STEP = 16;
+const dotsClip = (name, withDots) => ({
+  file: name + '.webm',
+  path: path.join(MEDIA_DIR, name + '.webm'),
+  title: name,
+  container: 'webm',
+  rate: RATES[1],
+  fps: 30,
+  frames: 15,
+  args: [
+    '-f', 'lavfi', '-i', 'color=c=gray:s=1920x1080:r=30:d=0.5',
+    '-vf', (withDots ? "geq=lum='if(eq(mod(X," + DOT_STEP + "),8)*eq(mod(Y," + DOT_STEP + "),8),255,128)'"
+                     : "geq=lum='128'") + ':cb=128:cr=128,format=yuv420p',
+    '-c:v', 'libvpx-vp9', '-lossless', '1', '-an',
+  ],
+});
+const dots = { plain: dotsClip('dots-none', false), dotted: dotsClip('dots-every-16px', true), step: DOT_STEP, count: 120 * 67 };
+
 const allClips = [
   ...RATES.flatMap((rate) => CONTAINERS.map((container) => barcode[rate.label][container.ext])),
   lossy,
   checker,
+  fast,
+  dots.plain,
+  dots.dotted,
   ...codecs,
 ];
 
-module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, checker, codecs, allClips };
+module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, checker, fast, dots, codecs, allClips };

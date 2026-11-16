@@ -9,7 +9,7 @@
  */
 
 const { test, expect, loadSlot, settle } = require('./support/app');
-const { RATES, CONTAINERS, barcode } = require('./support/clips');
+const { RATES, CONTAINERS, barcode, fast } = require('./support/clips');
 
 test.describe('Frame-rate detection', () => {
   for (const rate of RATES) {
@@ -36,6 +36,16 @@ test.describe('Frame-rate detection', () => {
       });
     }
   }
+
+  // At half speed a 240 fps video still shows 120 frames a second, more
+  // than a 60 Hz screen presents. It used to be measured as 120 fps.
+  test('240 fps MP4 clip is measured as 240 fps', async ({ page }) => {
+    await loadSlot(page, 0, fast.path);
+    await settle(page);
+    const measured = await page.evaluate(() => window.__a2o.S.slots[0].autoFps);
+    expect(measured).toBeCloseTo(240, 6);
+    await expect(page.locator('#scrub')).toHaveAttribute('max', String(fast.frames - 1));
+  });
 
   // The clips above are always measured from their first frame. Real files
   // can be measured from anywhere, and a busy machine skips frames. This
