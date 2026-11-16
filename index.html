@@ -813,7 +813,9 @@ function onMeta(sl) {
   const nowImg = imgSize();
   if (!wasImg || wasImg.w !== nowImg.w || wasImg.h !== nowImg.h) S.view.fit = true;
   updateScrubRange();
-  seekAll(S.frame);
+  // While playing, leave the Original alone: jumping it would rewind
+  // playback. The sync loop lines the newly opened Encoded video up with it.
+  if (!(S.playing && sl !== A())) seekAll(S.frame);
   detectFps(sl);
   renderSlots(); updateWarnings(); requestRender();
 }
@@ -842,10 +844,13 @@ async function detectFps(sl) {
 }
 
 // Change a slot's frame rate while keeping the same moment on screen.
+// The frame is mapped through its START time: a file first opens assuming
+// 30 fps, and mapping through the middle of frame 0 (1/60 s) would land on
+// frame 1 at 60 fps, or frame 2 at 120 fps.
 function changeFps(sl, mutate) {
-  const t = (S.frame + 0.5) / fpsOf(A());
+  const oldFps = fpsOf(A());
   mutate();
-  S.frame = Math.floor(t * fpsOf(A()));
+  S.frame = Math.floor(S.frame / oldFps * fpsOf(A()) + 1e-6);
   updateScrubRange();
   if (!S.playing) seekAll(S.frame);
   renderSlots(); updateWarnings();
@@ -885,7 +890,12 @@ function swapSlots() {
   const now = imgSize();
   if (!was || !now || was.w !== now.w || was.h !== now.h) S.view.fit = true;
   updateScrubRange();
-  seekAll(S.frame);
+  // Keep the same two pictures paired: the new Original starts on the frame
+  // the old Encoded was showing, and the offset points the other way.
+  const newFrame = A().ready && B().ready ? Math.max(0, S.encFrame) : S.frame;
+  S.offset = -S.offset;
+  setOffset(S.offset); // updates the offset readout (and seeks)
+  seekAll(newFrame);
   renderSlots(); updateWarnings(); requestRender();
   toast('Swapped. "' + (A().file ? A().file.name : '–') + '" is now the Original.');
 }
