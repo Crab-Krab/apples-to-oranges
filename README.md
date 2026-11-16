@@ -101,13 +101,13 @@ When zoomed in to 100% or more, the difference is calculated for each Original p
 
 A **codec** is the method used to compress a video, for example H.264 or AV1. To show the picture, the browser must understand that method. Which codecs a browser can play depends on the browser, the operating system and sometimes the graphics hardware, so the same file can play on one computer and fail on another.
 
-When a file can't be played, the tool says so and opens a **Codecs** window. That window shows what *your* browser reports it can play, which is the most reliable answer for your machine. You can open it at any time with the **Codecs** button.
+When a file can't be played, the tool says so and opens a **Codecs** window. For H.264 and HEVC files it also names the profile (the feature set the encoder used) and the bit depth, and explains when that is the likely reason, for example 10-bit H.264 in Firefox. That window shows what *your* browser reports it can play, which is the most reliable answer for your machine. You can open it at any time with the **Codecs** button.
 
 General picture (checked against caniuse.com's published data, November 2026; check the links for current details):
 
 | Codec | Usually works in |
 | --- | --- |
-| **H.264 (AVC)** | All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons. |
+| **H.264 (AVC)** | All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons. 10-bit H.264 and H.264 with 4:2:2 or 4:4:4 color (common in anime fan releases and camera footage) are a different story: Firefox and Safari hand H.264 to the operating system's decoder, which often can't play them, while Chrome, Edge and Opera usually decode them on their own. |
 | **HEVC (H.265)** | Safari on macOS and iOS. Chrome and Edge on macOS and Android. On Windows, Chrome and Edge need graphics hardware that can decode HEVC, and Edge also needs Microsoft's HEVC Video Extensions from the Microsoft Store. Firefox 137 or newer when the graphics hardware can decode HEVC. On Linux and ChromeOS only Chrome with working hardware decoding, so it is often missing there. |
 | **AV1** | Chrome, Firefox, Opera and Edge 121 or newer. Safari only on Apple devices with a hardware AV1 decoder (for example Macs with M3 chips or newer, iPhone 15 Pro or newer). |
 | **VP9** | Chrome, Edge, Firefox and Opera. Safari 16 or newer on Mac, and Safari on iPhone and iPad from iOS 17.4. Safari does not support transparency (alpha) in WebM video. |
@@ -116,7 +116,7 @@ Up-to-date tables: [HEVC](https://caniuse.com/hevc) · [AV1](https://caniuse.com
 
 **Tip:** if an HEVC file won't play, try Safari on a Mac, or Chrome or Edge on Windows.
 
-**Containers** (the file "wrapper": `.mp4`, `.mov`, `.webm`, `.mkv`) also matter. MP4 and WebM work almost everywhere. MOV usually works when the codec inside is supported. MKV works in Chrome and Edge, and support elsewhere is patchy.
+**Containers** (the file "wrapper": `.mp4`, `.mov`, `.webm`, `.mkv`) also matter. MP4 and WebM work almost everywhere. MOV usually works when the codec inside is supported. MKV works in Chrome, Edge and Firefox 145 or newer when it holds a common codec (H.264, HEVC, VP8, VP9 or AV1). Support elsewhere, such as Safari, is patchy.
 
 **Other requirements:** the page draws the videos with **WebGL** (the browser's built-in way to use the graphics card). Every current desktop browser has it. If it's missing, check that "hardware acceleration" is turned on in your browser settings.
 

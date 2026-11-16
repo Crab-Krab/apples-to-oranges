@@ -365,7 +365,7 @@
     <h3>General browser support</h3>
     <table>
       <tr><th>Codec</th><th>Where it usually works</th></tr>
-      <tr><td>H.264 (AVC)</td><td>All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons.</td></tr>
+      <tr><td>H.264 (AVC)</td><td>All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons. 10-bit H.264 and H.264 with 4:2:2 or 4:4:4 color (common in anime fan releases and camera footage) are a different story: Firefox and Safari hand H.264 to the operating system's decoder, which often can't play them, while Chrome, Edge and Opera usually decode them on their own.</td></tr>
       <tr><td>HEVC (H.265)</td><td>Safari on macOS and iOS. Chrome and Edge on macOS and Android. On Windows, Chrome and Edge need graphics hardware that can decode HEVC, and Edge also needs Microsoft's HEVC Video Extensions from the Microsoft Store. Firefox 137 or newer when the graphics hardware can decode HEVC. On Linux and ChromeOS only Chrome with working hardware decoding, so it is often missing there.</td></tr>
       <tr><td>AV1</td><td>Chrome, Firefox, Opera and Edge 121 or newer. Safari only on Apple devices with a hardware AV1 decoder (for example Macs with M3 chips or newer, iPhone 15 Pro or newer).</td></tr>
       <tr><td>VP9</td><td>Chrome, Edge, Firefox and Opera. Safari 16 or newer on Mac, and Safari on iPhone and iPad from iOS 17.4. Safari does not support transparency (alpha) in WebM video.</td></tr>
@@ -529,14 +529,88 @@ const MP4_CODECS = {
   av01: 'AV1', vp09: 'VP9', vp08: 'VP8', mp4v: 'MPEG-4 Part 2',
   apcn: 'ProRes', apch: 'ProRes', apcs: 'ProRes', apco: 'ProRes', ap4h: 'ProRes', ap4x: 'ProRes',
 };
+/* H.264 and HEVC files carry a small settings record ("avcC" / "hvcC") that
+   names the profile (feature set) and the bit depth. Some of these, such as
+   10-bit H.264, fail in browsers that rely on the operating system's decoder. */
+const AVC_PROFILES = { 66: 'Baseline', 77: 'Main', 88: 'Extended', 100: 'High', 110: 'High 10', 122: 'High 4:2:2', 244: 'High 4:4:4' };
+const HEVC_PROFILES = { 1: 'Main', 2: 'Main 10', 3: 'Main Still Picture', 4: 'Range Extensions' };
+const CHROMA = ['4:0:0', '4:2:0', '4:2:2', '4:4:4'];
+function parseAvcC(b) {
+  if (b.length < 8 || b[0] !== 1 || !AVC_PROFILES[b[1]]) return null;
+  const info = { profile: AVC_PROFILES[b[1]], bits: 8, chroma: 1 };
+  if ([100, 110, 122, 244].includes(b[1]) && (b[5] & 0x1f) > 0) {
+    // Read the bit depth from the first SPS (sequence parameter set).
+    const len = (b[6] << 8) | b[7];
+    const raw = b.subarray(8, 8 + len), sps = [];
+    for (let i = 0; i < raw.length; i++) { // drop "emulation prevention" bytes (00 00 03)
+      if (i >= 2 && raw[i] === 3 && raw[i - 1] === 0 && raw[i - 2] === 0) continue;
+      sps.push(raw[i]);
+    }
+    let pos = 32; // skip NAL header, profile, constraint flags, level
+    const bit = () => (sps[pos >> 3] >> (7 - (pos++ & 7))) & 1;
+    const ue = () => { let z = 0; while (pos < sps.length * 8 && !bit()) z++; let v = 1; for (let k = 0; k < z; k++) v = v * 2 + bit(); return v - 1; };
+    ue(); // sequence parameter set id
+    info.chroma = ue();
+    if (info.chroma === 3) bit();
+    info.bits = ue() + 8;
+    if (info.chroma > 3 || info.bits > 16) return { profile: info.profile, bits: 0, chroma: -1 };
+  }
+  return info;
+}
+function parseHvcC(b) {
+  if (b.length < 19 || b[0] !== 1) return null;
+  const p = b[1] & 0x1f;
+  return { profile: HEVC_PROFILES[p] || 'profile ' + p, chroma: b[16] & 3, bits: (b[17] & 7) + 8 };
+}
+function describeCodec(name, info) {
+  if (!info) return { label: name, hint: null };
+  const parts = [info.profile];
+  if (info.bits) parts.push(info.bits + '-bit');
+  if (info.chroma >= 0 && info.chroma !== 1) parts.push(CHROMA[info.chroma]);
+  let hint = null;
+  if (name === 'H.264' && (info.bits > 8 || info.chroma > 1)) {
+    hint = 'This is ' + (info.bits > 8 ? info.bits + '-bit ' : '') + 'H.264' + (info.chroma > 1 ? ' with ' + CHROMA[info.chroma] + ' color' : '') +
+      ', which many browsers cannot decode. Firefox and Safari use the operating system\'s H.264 decoder, and most of those only handle 8-bit 4:2:0. ' +
+      'Try Chrome or Edge, or re-encode the file as 8-bit 4:2:0 (yuv420p).';
+  } else if (name === 'HEVC' && (info.bits > 10 || info.chroma > 1)) {
+    hint = 'This HEVC file uses ' + (info.bits > 10 ? info.bits + '-bit' : CHROMA[info.chroma]) + ' video, which few browsers or graphics chips can decode. Most only handle 8-bit and 10-bit 4:2:0.';
+  }
+  return { label: name + ' (' + parts.join(', ') + ')', hint };
+}
+// Read a Matroska size field: the number of leading zero bits says how many bytes it spans.
+function ebmlSize(b, i) {
+  let len = 1, mask = 0x80;
+  while (len <= 8 && !(b[i] & mask)) { len++; mask >>= 1; }
+  if (len > 8) return null;
+  let v = b[i] & (mask - 1);
+  for (let k = 1; k < len; k++) v = v * 256 + b[i + k];
+  return { v, len };
+}
+// Find the settings record in a Matroska file: element 0x63A2 ("CodecPrivate").
+function mkvCodecPrivate(b, from, parse) {
+  for (const start of [from, 0]) {
+    for (let i = start; i + 3 < b.length; i++) {
+      if (b[i] !== 0x63 || b[i + 1] !== 0xA2) continue;
+      const s = ebmlSize(b, i + 2);
+      if (!s || s.v < 7 || s.v > 65536) continue;
+      const info = parse(b.subarray(i + 2 + s.len, i + 2 + s.len + s.v));
+      if (info) return info;
+    }
+  }
+  return null;
+}
 async function sniffCodec(file) {
   try {
     const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     if (head[0] === 0x1A && head[1] === 0x45 && head[2] === 0xDF && head[3] === 0xA3) {
       // WebM / Matroska: codec IDs are plain text near the start.
-      const text = new TextDecoder('latin1').decode(await file.slice(0, 1 << 20).arrayBuffer());
+      const bytes = new Uint8Array(await file.slice(0, 1 << 20).arrayBuffer());
+      const text = new TextDecoder('latin1').decode(bytes);
       for (const [id, name] of [['V_VP9', 'VP9'], ['V_AV1', 'AV1'], ['V_MPEGH/ISO/HEVC', 'HEVC'], ['V_MPEG4/ISO/AVC', 'H.264'], ['V_VP8', 'VP8']]) {
-        if (text.includes(id)) return name;
+        const at = text.indexOf(id);
+        if (at < 0) continue;
+        const parse = name === 'H.264' ? parseAvcC : name === 'HEVC' ? parseHvcC : null;
+        return describeCodec(name, parse ? mkvCodecPrivate(bytes, at, parse) : null);
       }
       return null;
     }
@@ -554,7 +628,21 @@ async function sniffCodec(file) {
         for (let j = 0; j + 20 < buf.length; j++) {
           if (buf[j] === 0x73 && buf[j + 1] === 0x74 && buf[j + 2] === 0x73 && buf[j + 3] === 0x64) { // "stsd"
             const fc = String.fromCharCode(buf[j + 16], buf[j + 17], buf[j + 18], buf[j + 19]);
-            if (MP4_CODECS[fc]) return MP4_CODECS[fc];
+            if (!MP4_CODECS[fc]) continue;
+            const name = MP4_CODECS[fc];
+            // The settings record is a box inside the sample description, e.g. "avcC".
+            const tag = name === 'H.264' ? 'avcC' : name.startsWith('HEVC') ? 'hvcC' : null;
+            let info = null;
+            if (tag) {
+              const end = Math.min(buf.length - 8, j + 4096);
+              for (let k = j + 20; k < end && !info; k++) {
+                if (String.fromCharCode(buf[k], buf[k + 1], buf[k + 2], buf[k + 3]) !== tag) continue;
+                const size = ((buf[k - 4] << 24) | (buf[k - 3] << 16) | (buf[k - 2] << 8) | buf[k - 1]) >>> 0;
+                const body = buf.subarray(k + 4, k - 4 + Math.min(size, 65536));
+                info = tag === 'avcC' ? parseAvcC(body) : parseHvcC(body);
+              }
+            }
+            return describeCodec(name, info);
           }
         }
         return null;
@@ -660,7 +748,7 @@ function loadFile(i, file) {
   const token = ++sl.token;
   if (sl.url) URL.revokeObjectURL(sl.url);
   Object.assign(sl, {
-    file, url: URL.createObjectURL(file), codec: null,
+    file, url: URL.createObjectURL(file), codec: null, codecHint: null,
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
     texValid: false, pendingSeek: null, presented: null,
@@ -669,7 +757,8 @@ function loadFile(i, file) {
   renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
   sniffCodec(file).then((c) => {
     if (token !== sl.token) return;
-    sl.codec = c;
+    sl.codec = c ? c.label : null;
+    sl.codecHint = c ? c.hint : null;
     renderSlots();
     if (sl.error && $('codecModal').classList.contains('open')) showCodecHelp(sl);
   });
@@ -1469,7 +1558,8 @@ function showCodecHelp(sl) {
   const role = sl ? ROLES[S.slots.indexOf(sl)] : null;
   $('codecErr').innerHTML = sl && sl.error
     ? '<div class="errbox"><b>' + esc(role) + ': ' + esc(sl.file ? sl.file.name : '') + '</b><br>' + esc(sl.error) +
-      (sl.codec ? '<br>This file\'s video codec looks like <b>' + esc(sl.codec) + '</b>.' : '') + '</div>'
+      (sl.codec ? '<br>This file\'s video codec looks like <b>' + esc(sl.codec) + '</b>.' : '') +
+      (sl.codecHint ? '<br>' + esc(sl.codecHint) : '') + '</div>'
     : '';
   openModal('codecModal');
 }
