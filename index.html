@@ -1,0 +1,1648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apples to Oranges</title>
+<meta name="description" content="Compare an original video against an encoded version, frame by frame, right in your browser. Files never leave your computer.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='11' cy='17' r='9' fill='%23c8423a'/%3E%3Ccircle cx='21' cy='17' r='9' fill='%23e8892b'/%3E%3Crect x='10' y='4' width='2' height='6' fill='%23555'/%3E%3C/svg%3E">
+<style>
+  :root {
+    /* All interface colors are neutral grays (equal red, green and blue) so
+       they don't tint how you perceive the colors in the video. */
+    --bg: #262626;
+    --panel: #2f2f2f;
+    --panel-2: #383838;
+    --panel-3: #444444;
+    --line: #4a4a4a;
+    --text: #e4e4e4;
+    --text-dim: #a0a0a0;
+    --text-faint: #7a7a7a;
+    --viewer: #1b1b1b;
+    --active-bg: #d6d6d6;
+    --active-text: #1b1b1b;
+    --warn: #d8b25a;
+    --err: #e08080;
+    --radius: 6px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-columns: minmax(0, 1fr); /* never wider than the window */
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  button, select, input { font: inherit; color: inherit; }
+  button {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: var(--panel-3); }
+  button:disabled { opacity: .45; cursor: default; }
+  button[aria-pressed="true"] { background: var(--active-bg); color: var(--active-text); border-color: var(--active-bg); }
+  button:focus-visible, select:focus-visible, input:focus-visible, .slot:focus-visible { outline: 2px solid #bdbdbd; outline-offset: 1px; }
+  select {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 4px 6px;
+  }
+  .icon { width: 16px; height: 16px; display: block; fill: currentColor; }
+  button.ico { padding: 5px 8px; }
+
+  /* ---------- Header with the two file slots ---------- */
+  header {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; margin-right: 4px; }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; white-space: nowrap; }
+  .slots { display: flex; gap: 8px; align-items: stretch; flex: 1 1 520px; min-width: 0; }
+  .slot {
+    flex: 1 1 0;
+    min-width: 0;
+    background: var(--panel-2);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    cursor: pointer;
+    position: relative;
+  }
+  .slot.loaded { border-style: solid; }
+  .slot.dragover { border-color: #d0d0d0; background: var(--panel-3); }
+  .slot.has-error { border-color: var(--err); }
+  .slot-top { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .role { font-weight: 650; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--text); flex: none; }
+  .fname { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 2px 10px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .fpsrow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .fpsrow select { padding: 1px 4px; font-size: 12px; }
+  .slot-err { color: var(--err); font-size: 12px; margin-top: 3px; }
+  .slot-err button { font-size: 12px; padding: 1px 6px; margin-left: 4px; }
+  #swapBtn { align-self: center; }
+  .head-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+  /* ---------- Warnings ---------- */
+  #warnings { background: #332f26; color: var(--warn); font-size: 13px; border-bottom: 1px solid #4a4334; }
+  #warnings:empty { border-bottom: 0; } /* stays in the layout (0 px tall) so the rows below don't shift */
+  #warnings ul { margin: 0; padding: 6px 12px 6px 30px; }
+  #warnings li { margin: 2px 0; }
+
+  /* ---------- Viewer ---------- */
+  #viewer { position: relative; background: var(--viewer); overflow: hidden; min-height: 160px; }
+  #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #gl.panning { cursor: grabbing; }
+  #gl.wipe-hover { cursor: ew-resize; }
+  /* The real <video> elements are kept on screen but invisible and tiny.
+     Browsers may pause videos that are fully off screen, so we avoid that. */
+  #vidhost { position: absolute; left: 0; top: 0; width: 2px; height: 2px; overflow: hidden; opacity: 0.01; pointer-events: none; z-index: 0; }
+  #vidhost video { width: 2px; height: 2px; }
+  .label {
+    position: absolute;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(20,20,20,.78);
+    color: #eee;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 3;
+  }
+  .label small { font-weight: 400; color: #bbb; margin-left: 6px; }
+  #divider { position: absolute; top: 0; bottom: 0; width: 0; z-index: 2; pointer-events: none; display: none; }
+  #divider::before { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: rgba(235,235,235,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.45); }
+  #divider .knob {
+    position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(235,235,235,.95); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+    display: grid; place-items: center; color: #222; font-size: 13px; font-weight: 700;
+  }
+  #zoomInfo {
+    position: absolute; right: 10px; bottom: 10px; z-index: 3;
+    background: rgba(20,20,20,.78); color: #ddd; padding: 2px 8px; border-radius: 4px;
+    font: 12px var(--mono); pointer-events: none;
+  }
+  #busy {
+    position: absolute; left: 10px; bottom: 10px; z-index: 3;
+    background: rgba(20,20,20,.78); color: #ddd; padding: 2px 8px; border-radius: 4px;
+    font-size: 12px; pointer-events: none;
+  }
+  #empty {
+    position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; padding: 16px;
+  }
+  #empty .box {
+    max-width: 560px; text-align: center; border: 2px dashed var(--line); border-radius: 12px;
+    padding: 28px 24px; background: rgba(40,40,40,.6);
+  }
+  #empty h2 { margin: 0 0 8px; font-size: 20px; font-weight: 650; }
+  #empty p { margin: 6px 0; color: var(--text-dim); }
+  #empty .btns { display: flex; gap: 10px; justify-content: center; margin: 16px 0 10px; flex-wrap: wrap; }
+  #viewer.dragover #empty .box, #viewer.dragover::after { border-color: #d0d0d0; }
+  #viewer.dragover::after {
+    content: "Drop to load"; position: absolute; inset: 10px; border: 2px dashed #d0d0d0; border-radius: 12px;
+    display: grid; place-items: center; font-size: 18px; background: rgba(30,30,30,.7); z-index: 6; pointer-events: none;
+  }
+  #toast {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 7;
+    background: rgba(230,230,230,.95); color: #1b1b1b; padding: 6px 12px; border-radius: 6px;
+    font-size: 13px; max-width: calc(100% - 32px); text-align: center; pointer-events: none;
+    opacity: 0; transition: opacity .2s;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ---------- Controls ---------- */
+  footer { background: var(--panel); border-top: 1px solid var(--line); padding: 6px 12px 8px; }
+  .scrubrow { display: flex; align-items: center; gap: 12px; }
+  #scrub { flex: 1; min-width: 80px; accent-color: #cfcfcf; height: 22px; }
+  .readout { font: 13px var(--mono); white-space: nowrap; display: flex; gap: 12px; align-items: baseline; }
+  .readout .dim { color: var(--text-dim); font-size: 12px; }
+  .ctrlrow { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 6px; }
+  .group { display: flex; align-items: center; gap: 5px; }
+  .group > .lbl { color: var(--text-dim); font-size: 12px; margin-right: 2px; }
+  .seg { display: flex; }
+  .seg button { border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  #offsetVal { font: 13px var(--mono); min-width: 74px; text-align: center; }
+  #zoomVal { font: 12px var(--mono); min-width: 52px; text-align: center; color: var(--text-dim); }
+  #diffOpts[hidden] { display: none; }
+  #boost { width: 110px; accent-color: #cfcfcf; }
+  #boostVal { font: 12px var(--mono); min-width: 40px; }
+  .legend { width: 70px; height: 10px; border-radius: 2px; border: 1px solid var(--line); }
+
+  /* ---------- Overlays (help, codec info) ---------- */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; place-items: center; z-index: 20; padding: 16px; }
+  .modal.open { display: grid; }
+  .modal .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; max-width: 720px; width: 100%;
+    max-height: calc(100vh - 32px); overflow: auto; padding: 18px 22px; position: relative;
+  }
+  .modal h2 { margin: 0 0 10px; font-size: 18px; }
+  .modal h3 { margin: 16px 0 6px; font-size: 14px; }
+  .modal .close { position: absolute; right: 12px; top: 12px; }
+  .modal table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .modal td, .modal th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .modal th { color: var(--text-dim); font-weight: 600; }
+  kbd {
+    font: 12px var(--mono); background: var(--panel-3); border: 1px solid #5a5a5a; border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+  }
+  .modal p { margin: 6px 0; color: var(--text-dim); }
+  .modal a { color: #dcdcdc; }
+  .yes { color: #b9d9b0; } .no { color: var(--err); } .maybe { color: var(--warn); }
+  .errbox { background: #3a2c2c; border: 1px solid #5a3c3c; border-radius: 6px; padding: 8px 12px; color: #f0c8c8; margin-bottom: 8px; }
+  #fatal { position: absolute; inset: 0; display: none; place-items: center; z-index: 8; padding: 20px; text-align: center; color: var(--err); }
+
+  @media (max-width: 700px) {
+    body { height: auto; min-height: 100vh; overflow: auto; grid-template-rows: auto auto 62vh auto; }
+    header { padding: 8px; }
+    .brand h1 { font-size: 15px; }
+    .slots { flex-basis: 100%; flex-direction: column; }
+    #swapBtn { align-self: flex-start; }
+    .head-right { margin-left: 0; }
+    footer { padding: 6px 8px 10px; }
+    .scrubrow { flex-wrap: wrap; gap: 4px 12px; }
+    #scrub { flex-basis: 100%; order: 3; }
+    .readout .dim.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><circle cx="11" cy="17" r="9" fill="#9a9a9a"/><circle cx="21" cy="17" r="9" fill="#cfcfcf"/></svg>
+    <h1>Apples to Oranges</h1>
+  </div>
+  <div class="slots">
+    <div class="slot" id="slot0" tabindex="0" role="button" aria-label="Original video: click to choose a file or drop one here"></div>
+    <button id="swapBtn" title="Swap which file is the Original and which is the Encoded" disabled>⇄ Swap</button>
+    <div class="slot" id="slot1" tabindex="0" role="button" aria-label="Encoded video: click to choose a file or drop one here"></div>
+  </div>
+  <div class="head-right">
+    <button id="codecBtn" title="Which browsers can play which codecs">Codecs</button>
+    <button id="helpBtn" title="Keyboard shortcuts (?)">? Shortcuts</button>
+  </div>
+</header>
+
+<div id="warnings" role="status" aria-live="polite"></div>
+
+<main id="viewer">
+  <div id="vidhost" aria-hidden="true"></div>
+  <canvas id="gl" aria-label="Video comparison view"></canvas>
+  <div id="divider"><div class="knob">⇔</div></div>
+  <div class="label" id="labA" hidden></div>
+  <div class="label" id="labB" hidden></div>
+  <div class="label" id="labD" hidden></div>
+  <div id="zoomInfo" hidden></div>
+  <div id="busy" hidden>Decoding…</div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="fatal"></div>
+  <div id="empty">
+    <div class="box">
+      <h2>Drop your two videos here</h2>
+      <p>Drop both at once and the larger file is assumed to be the Original. You can swap them afterwards.</p>
+      <div class="btns">
+        <button id="pickA">Choose Original…</button>
+        <button id="pickB">Choose Encoded…</button>
+      </div>
+      <p>Your files stay on your computer. Nothing is uploaded anywhere.</p>
+      <p>Press <kbd>?</kbd> for keyboard shortcuts.</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="scrubrow">
+    <div class="readout">
+      <span id="tcode">0:00.000</span>
+      <span id="fcode">Frame –</span>
+    </div>
+    <input type="range" id="scrub" min="0" max="0" step="1" value="0" aria-label="Position (frame)" disabled>
+    <div class="readout"><span class="dim hide-sm" id="encFrame"></span><span class="dim" id="durcode"></span></div>
+  </div>
+  <div class="ctrlrow">
+    <div class="group" role="group" aria-label="Playback">
+      <button class="ico" id="back10" title="Back 10 frames (Shift+Left)"><svg class="icon" viewBox="0 0 16 16"><path d="M8 3v10L1 8zM15 3v10L8 8z"/></svg></button>
+      <button class="ico" id="back1" title="Back 1 frame (Left)"><svg class="icon" viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
+      <button class="ico" id="playBtn" title="Play / pause (Space)" style="min-width:42px"><svg class="icon" id="playIcon" viewBox="0 0 16 16"><path d="M4 2v12l10-6z"/></svg></button>
+      <button class="ico" id="fwd1" title="Forward 1 frame (Right)"><svg class="icon" viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg></button>
+      <button class="ico" id="fwd10" title="Forward 10 frames (Shift+Right)"><svg class="icon" viewBox="0 0 16 16"><path d="M8 3v10l7-5zM1 3v10l7-5z"/></svg></button>
+      <select id="speed" title="Playback speed" aria-label="Playback speed"></select>
+      <button id="muteBtn" title="Mute / unmute the Original's audio (M). The Encoded video is always muted.">Sound on</button>
+    </div>
+    <div class="group" role="group" aria-label="View">
+      <div class="seg">
+        <button id="mode-sbs" aria-pressed="true" title="Side by side (1)">Side by side</button>
+        <button id="mode-wipe" aria-pressed="false" title="Slider wipe (2)">Wipe</button>
+        <button id="mode-diff" aria-pressed="false" title="Difference (3)">Difference</button>
+      </div>
+    </div>
+    <div class="group" id="diffOpts" hidden role="group" aria-label="Difference options">
+      <span class="lbl">Boost</span>
+      <input type="range" id="boost" min="0" max="6" step="0.25" value="3" aria-label="Difference boost">
+      <span id="boostVal">×8</span>
+      <select id="diffStyle" aria-label="Difference style">
+        <option value="0">Heatmap</option>
+        <option value="1">Grayscale</option>
+        <option value="2">Per-channel (RGB)</option>
+      </select>
+      <div class="legend" id="legend" title="Left = no difference, right = large difference"></div>
+    </div>
+    <div class="group" role="group" aria-label="Zoom">
+      <span class="lbl">Zoom</span>
+      <button id="fitBtn" title="Fit to window (0)">Fit</button>
+      <button id="oneBtn" title="1:1, one video pixel per screen pixel (Z)">1:1</button>
+      <button class="ico" id="zoomOut" title="Zoom out (-)">−</button>
+      <span id="zoomVal">–</span>
+      <button class="ico" id="zoomIn" title="Zoom in (+)">+</button>
+    </div>
+    <div class="group" role="group" aria-label="Sync offset">
+      <span class="lbl">Encode offset</span>
+      <button class="ico" id="offMinus" title="Show an earlier encoded frame ([)">−</button>
+      <span id="offsetVal" title="Click to reset to 0">0 frames</span>
+      <button class="ico" id="offPlus" title="Show a later encoded frame (])">+</button>
+    </div>
+  </div>
+</footer>
+
+<div class="modal" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+  <div class="card">
+    <button class="close" data-close>Close</button>
+    <h2 id="helpTitle">Keyboard shortcuts</h2>
+    <table>
+      <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Step back / forward one frame</td></tr>
+      <tr><td><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></td><td>Step back / forward ten frames</td></tr>
+      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td><td>Side by side / Wipe / Difference view</td></tr>
+      <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Shift the Encoded video one frame earlier / later</td></tr>
+      <tr><td><kbd>0</kbd></td><td>Fit to window</td></tr>
+      <tr><td><kbd>Z</kbd></td><td>1:1 actual pixels</td></tr>
+      <tr><td><kbd>+</kbd> <kbd>-</kbd></td><td>Zoom in / out</td></tr>
+      <tr><td><kbd>M</kbd></td><td>Mute / unmute the Original's audio</td></tr>
+      <tr><td><kbd>?</kbd></td><td>Show / hide this help</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Close this window</td></tr>
+    </table>
+    <h3>Mouse</h3>
+    <table>
+      <tr><td>Scroll wheel</td><td>Zoom toward the cursor (trackpad pinch works too)</td></tr>
+      <tr><td>Drag</td><td>Pan around the picture</td></tr>
+      <tr><td>Double-click</td><td>Switch between Fit and 1:1 at that spot</td></tr>
+      <tr><td>Drag the divider</td><td>Move the split line in Wipe view</td></tr>
+    </table>
+    <p style="margin-top:12px">Frame numbers start at 0, the same as ffmpeg.</p>
+  </div>
+</div>
+
+<div class="modal" id="codecModal" role="dialog" aria-modal="true" aria-labelledby="codecTitle">
+  <div class="card">
+    <button class="close" data-close>Close</button>
+    <h2 id="codecTitle">Codec support</h2>
+    <div id="codecErr"></div>
+    <p>A <b>codec</b> is the method used to compress the video. The browser has to understand that method to show the picture. Support varies by browser, operating system and graphics hardware, so the same file can play on one computer and not another.</p>
+    <h3>What this browser says it can play</h3>
+    <table id="codecTable"></table>
+    <p style="font-size:12px">"Probably" and "maybe" are the browser's own words. A file can still fail if it uses an unusual profile (for example 10-bit or 4:2:2 color).</p>
+    <h3>General browser support</h3>
+    <table>
+      <tr><th>Codec</th><th>Where it usually works</th></tr>
+      <tr><td>H.264 (AVC)</td><td>All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons.</td></tr>
+      <tr><td>HEVC (H.265)</td><td>Safari on macOS and iOS. Chrome and Edge on Windows, macOS, ChromeOS and Android, but only when the graphics hardware can decode HEVC (Edge on Windows may also need Microsoft's HEVC Video Extensions). Firefox support is limited and depends on platform and hardware. Usually not available on Linux.</td></tr>
+      <tr><td>AV1</td><td>Chrome, Firefox, Opera and recent Edge. Safari only on Apple devices with a hardware AV1 decoder (roughly: Macs with M3 chips or newer, iPhone 15 Pro or newer).</td></tr>
+      <tr><td>VP9</td><td>Chrome, Edge, Firefox and Opera. Safari on recent macOS and iOS versions, with some limits.</td></tr>
+    </table>
+    <p>If a file won't play, try a different browser (Chrome and Edge cover the most codecs on Windows, Safari covers HEVC best on a Mac), or check the up-to-date tables at
+      <a href="https://caniuse.com/hevc" target="_blank" rel="noopener">caniuse.com/hevc</a>,
+      <a href="https://caniuse.com/av1" target="_blank" rel="noopener">caniuse.com/av1</a>,
+      <a href="https://caniuse.com/webm" target="_blank" rel="noopener">caniuse.com/webm</a> and
+      <a href="https://caniuse.com/mpeg4" target="_blank" rel="noopener">caniuse.com/mpeg4</a>.</p>
+  </div>
+</div>
+
+<input type="file" id="file0" accept="video/*,.mkv,.mov,.mp4,.m4v,.webm,.ts,.mts,.m2ts" multiple hidden>
+<input type="file" id="file1" accept="video/*,.mkv,.mov,.mp4,.m4v,.webm,.ts,.mts,.m2ts" multiple hidden>
+
+<noscript><p style="padding:20px">Apples to Oranges needs JavaScript turned on.</p></noscript>
+
+<script>
+(() => {
+'use strict';
+
+/* =====================================================================
+   Apples to Oranges
+   Copyright (C) 2026 the Apples to Oranges authors.
+   SPDX-License-Identifier: GPL-3.0-or-later
+   Free software under the GNU General Public License v3 or later, with
+   NO WARRANTY. See the LICENSE file for the full terms.
+
+   Compares an Original video with an Encoded copy, frame by frame.
+   Everything happens inside this page. Files are opened with
+   URL.createObjectURL, which gives the page a private link to the file
+   on your own disk. Nothing is uploaded.
+   ===================================================================== */
+
+const $ = (id) => document.getElementById(id);
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+const HAS_RVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+// Standard frame rates. Measured rates get "snapped" to the nearest one.
+const STD_FPS = [
+  [24000 / 1001, '23.976'], [24, '24'], [25, '25'], [30000 / 1001, '29.97'], [30, '30'],
+  [48000 / 1001, '47.952'], [48, '48'], [50, '50'], [60000 / 1001, '59.94'], [60, '60'],
+  [72, '72'], [90, '90'], [100, '100'], [120000 / 1001, '119.88'], [120, '120'], [144, '144'], [240, '240'],
+];
+const SPEEDS = [0.1, 0.25, 0.5, 1, 1.5, 2];
+const ROLES = ['Original', 'Encoded'];
+const FALLBACK_FPS = 30;
+const VIEWER_BG = [27 / 255, 27 / 255, 27 / 255];
+
+const canvas = $('gl'), viewer = $('viewer'), vidhost = $('vidhost');
+
+/* ---------------------------------------------------------------------
+   Slots: one per video. Slot 0 is always the Original, slot 1 the Encoded.
+   "Swap" just exchanges the two slot objects.
+   --------------------------------------------------------------------- */
+function makeSlot() {
+  const v = document.createElement('video');
+  v.preload = 'auto';
+  v.playsInline = true;
+  v.muted = true;
+  v.disablePictureInPicture = true;
+  vidhost.appendChild(v);
+  const sl = {
+    video: v, file: null, url: null, codec: null,
+    autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
+    w: 0, h: 0, duration: 0, ready: false, error: null,
+    tex: null, texValid: false, dirty: 0, pendingSeek: null, token: 0,
+    presented: null, rvfcArmed: false,
+  };
+  v.addEventListener('loadedmetadata', () => onMeta(sl));
+  v.addEventListener('durationchange', () => {
+    if (isFinite(v.duration) && v.duration > 0) { sl.duration = v.duration; updateScrubRange(); updateWarnings(); renderSlots(); }
+  });
+  v.addEventListener('seeked', () => onSeeked(sl));
+  v.addEventListener('error', () => onVideoError(sl));
+  v.addEventListener('loadeddata', () => { sl.dirty = 2; armRVFC(sl); requestRender(); });
+  v.addEventListener('ended', () => { if (sl === A() && S.playing) onEnded(); });
+  armRVFC(sl);
+  return sl;
+}
+
+// requestVideoFrameCallback tells us exactly when a new frame is shown and
+// its timestamp. We use it to know when to refresh the picture.
+function armRVFC(sl) {
+  if (!HAS_RVFC || sl.rvfcArmed) return;
+  sl.rvfcArmed = true;
+  sl.video.requestVideoFrameCallback((now, md) => {
+    sl.rvfcArmed = false;
+    sl.presented = md.mediaTime;
+    sl.dirty = Math.max(sl.dirty, 1);
+    requestRender();
+    armRVFC(sl);
+  });
+}
+
+const S = {
+  slots: [makeSlot(), makeSlot()],
+  mode: 'sbs',          // 'sbs' | 'wipe' | 'diff'
+  playing: false,
+  frame: 0,             // current Original frame while paused
+  encFrame: 0,          // matching Encoded frame while paused
+  offset: 0,            // Encoded offset in frames
+  speed: 1,
+  muted: false,
+  wipe: 0.5,            // divider position, 0..1 across the view
+  boost: 8,
+  style: 0,             // 0 heatmap, 1 grayscale, 2 per-channel
+  view: { s: 1, tx: 0, ty: 0, fit: true }, // zoom (s) and pan (tx, ty) in screen pixels
+  lastPane: null,
+  needsRender: true,
+  scrubbing: false,
+};
+const A = () => S.slots[0];
+const B = () => S.slots[1];
+const fpsOf = (sl) => sl.manualFps || sl.autoFps || FALLBACK_FPS;
+
+/* ---------------------------------------------------------------------
+   Formatting helpers
+   --------------------------------------------------------------------- */
+function fmtFps(f) {
+  for (const [v, label] of STD_FPS) if (Math.abs(v - f) < 1e-6) return label;
+  return String(Math.round(f * 1000) / 1000);
+}
+function fmtTime(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const ms = Math.floor(t * 1000 + 1e-6);
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, r = ms % 1000;
+  const pad = (n, w) => String(n).padStart(w, '0');
+  return (h ? h + ':' + pad(m, 2) : m) + ':' + pad(s, 2) + '.' + pad(r, 3);
+}
+function fmtBytes(b) {
+  const u = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (i ? b.toFixed(b < 10 ? 2 : 1) : b) + ' ' + u[i];
+}
+function aspectStr(w, h) {
+  const g = (a, b) => b ? g(b, a % b) : a;
+  const d = g(w, h);
+  const rw = w / d, rh = h / d;
+  return rw <= 64 ? rw + ':' + rh : (w / h).toFixed(3) + ':1';
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+let toastTimer = 0;
+function toast(msg, ms = 3500) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/* ---------------------------------------------------------------------
+   Codec sniffing: peek inside the file to name its video codec.
+   Browsers don't report the codec, so we look for well-known markers.
+   --------------------------------------------------------------------- */
+const MP4_CODECS = {
+  avc1: 'H.264', avc3: 'H.264', hvc1: 'HEVC', hev1: 'HEVC', dvh1: 'HEVC (Dolby Vision)', dvhe: 'HEVC (Dolby Vision)',
+  av01: 'AV1', vp09: 'VP9', vp08: 'VP8', mp4v: 'MPEG-4 Part 2',
+  apcn: 'ProRes', apch: 'ProRes', apcs: 'ProRes', apco: 'ProRes', ap4h: 'ProRes', ap4x: 'ProRes',
+};
+async function sniffCodec(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    if (head[0] === 0x1A && head[1] === 0x45 && head[2] === 0xDF && head[3] === 0xA3) {
+      // WebM / Matroska: codec IDs are plain text near the start.
+      const text = new TextDecoder('latin1').decode(await file.slice(0, 1 << 20).arrayBuffer());
+      for (const [id, name] of [['V_VP9', 'VP9'], ['V_AV1', 'AV1'], ['V_MPEGH/ISO/HEVC', 'HEVC'], ['V_MPEG4/ISO/AVC', 'H.264'], ['V_VP8', 'VP8']]) {
+        if (text.includes(id)) return name;
+      }
+      return null;
+    }
+    // MP4 / MOV: walk the top-level boxes to find "moov", then the sample description.
+    let off = 0;
+    for (let i = 0; i < 200 && off + 8 <= file.size; i++) {
+      const dv = new DataView(await file.slice(off, off + 16).arrayBuffer());
+      let size = dv.getUint32(0);
+      const type = String.fromCharCode(dv.getUint8(4), dv.getUint8(5), dv.getUint8(6), dv.getUint8(7));
+      if (size === 1 && dv.byteLength >= 16) size = Number(dv.getBigUint64(8));
+      else if (size === 0) size = file.size - off;
+      if (size < 8) break;
+      if (type === 'moov') {
+        const buf = new Uint8Array(await file.slice(off, off + Math.min(size, 64 << 20)).arrayBuffer());
+        for (let j = 0; j + 20 < buf.length; j++) {
+          if (buf[j] === 0x73 && buf[j + 1] === 0x74 && buf[j + 2] === 0x73 && buf[j + 3] === 0x64) { // "stsd"
+            const fc = String.fromCharCode(buf[j + 16], buf[j + 17], buf[j + 18], buf[j + 19]);
+            if (MP4_CODECS[fc]) return MP4_CODECS[fc];
+          }
+        }
+        return null;
+      }
+      off += size;
+    }
+  } catch (e) { /* unreadable or unusual file: just don't show a codec */ }
+  return null;
+}
+
+/* ---------------------------------------------------------------------
+   Frame-rate detection. Browsers don't tell us the frame rate, so we play
+   a hidden, muted copy of the file at half speed for a moment and record
+   the timestamp of every frame that gets shown.
+   --------------------------------------------------------------------- */
+function probeFps(url) {
+  return new Promise((resolve) => {
+    if (!HAS_RVFC) return resolve(null);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    vidhost.appendChild(v);
+    const times = [];
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+      v.remove();
+      resolve(estimateFps(times));
+    };
+    const timer = setTimeout(finish, 4000);
+    const cb = (now, md) => {
+      times.push(md.mediaTime);
+      if (times.length >= 45) finish(); else v.requestVideoFrameCallback(cb);
+    };
+    v.addEventListener('ended', finish);
+    v.addEventListener('error', finish);
+    v.addEventListener('loadedmetadata', () => {
+      v.playbackRate = 0.5; // half speed makes it less likely the screen skips frames
+      v.requestVideoFrameCallback(cb);
+      v.play().catch(finish);
+    }, { once: true });
+    v.src = url;
+  });
+}
+function estimateFps(times) {
+  const d = [];
+  for (let i = 1; i < times.length; i++) {
+    const dt = times[i] - times[i - 1];
+    if (dt > 1e-4 && dt < 1) d.push(dt);
+  }
+  if (d.length < 4) return null;
+  // The shortest common gap is one frame. Longer gaps are skipped frames
+  // (2 frames, 3 frames...), so count how many frames each gap covers.
+  const sorted = [...d].sort((a, b) => a - b);
+  const base = sorted[Math.floor(sorted.length * 0.1)];
+  let frames = 0, span = 0;
+  for (const x of d) {
+    const k = Math.round(x / base);
+    if (k >= 1 && k <= 8 && Math.abs(x / base - k) < 0.25) { frames += k; span += x; }
+  }
+  if (!frames || !span) return null;
+  return snapFps(frames / span);
+}
+function snapFps(raw) {
+  let best = null, bestErr = Infinity;
+  for (const [v] of STD_FPS) {
+    const err = Math.abs(raw / v - 1);
+    if (err < bestErr) { bestErr = err; best = v; }
+  }
+  return bestErr < 0.015 ? best : Math.round(raw * 1000) / 1000;
+}
+
+/* ---------------------------------------------------------------------
+   Loading files
+   --------------------------------------------------------------------- */
+function looksLikeVideo(f) {
+  return (f.type && f.type.startsWith('video/')) || /\.(mp4|m4v|mov|mkv|webm|ts|mts|m2ts|avi|3gp|ogv)$/i.test(f.name);
+}
+
+function handleFiles(fileList, target) {
+  let files = [...fileList];
+  const vids = files.filter(looksLikeVideo);
+  if (vids.length) files = vids;
+  if (!files.length) return;
+  if (files.length >= 2) {
+    const [big, small] = files.slice(0, 2).sort((p, q) => q.size - p.size);
+    loadFile(0, big);
+    loadFile(1, small);
+    toast('Guessed the larger file is the Original. Click Swap if that is wrong.', 5000);
+    return;
+  }
+  const f = files[0];
+  if (target === 0 || target === 1) loadFile(target, f);
+  else if (!A().file) loadFile(0, f);
+  else loadFile(1, f); // second file, or a replacement encode
+}
+
+function loadFile(i, file) {
+  if (S.playing) pause();
+  const sl = S.slots[i];
+  const token = ++sl.token;
+  if (sl.url) URL.revokeObjectURL(sl.url);
+  Object.assign(sl, {
+    file, url: URL.createObjectURL(file), codec: null,
+    autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
+    w: 0, h: 0, duration: 0, ready: false, error: null,
+    texValid: false, pendingSeek: null, presented: null,
+  });
+  sl.video.src = sl.url;
+  renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
+  sniffCodec(file).then((c) => {
+    if (token !== sl.token) return;
+    sl.codec = c;
+    renderSlots();
+    if (sl.error && $('codecModal').classList.contains('open')) showCodecHelp(sl);
+  });
+  setTimeout(() => {
+    if (token === sl.token && !sl.ready && !sl.error) failSlot(sl, 'timeout');
+  }, 20000);
+}
+
+function onMeta(sl) {
+  const v = sl.video;
+  if (!sl.file) return;
+  if (!v.videoWidth || !v.videoHeight) { failSlot(sl, 'novideo'); return; }
+  const wasImg = imgSize();
+  sl.w = v.videoWidth;
+  sl.h = v.videoHeight;
+  sl.duration = isFinite(v.duration) ? v.duration : 0;
+  sl.ready = true;
+  sl.error = null;
+  applyMute();
+  const nowImg = imgSize();
+  if (!wasImg || wasImg.w !== nowImg.w || wasImg.h !== nowImg.h) S.view.fit = true;
+  updateScrubRange();
+  seekAll(S.frame);
+  detectFps(sl);
+  renderSlots(); updateWarnings(); requestRender();
+}
+
+async function detectFps(sl) {
+  const token = sl.token;
+  sl.detecting = true;
+  renderSlots();
+  const fps = await probeFps(sl.url);
+  if (token !== sl.token) return;
+  changeFps(sl, () => {
+    sl.detecting = false;
+    sl.autoFps = fps;
+    sl.fpsFailed = !fps;
+  });
+}
+
+// Change a slot's frame rate while keeping the same moment on screen.
+function changeFps(sl, mutate) {
+  const t = (S.frame + 0.5) / fpsOf(A());
+  mutate();
+  S.frame = Math.floor(t * fpsOf(A()));
+  updateScrubRange();
+  if (!S.playing) seekAll(S.frame);
+  renderSlots(); updateWarnings();
+}
+
+function failSlot(sl, kind) {
+  const v = sl.video;
+  let msg;
+  if (kind === 'novideo') msg = 'This browser opened the file but cannot decode its video.';
+  else if (kind === 'timeout') msg = 'The file took too long to open.';
+  else {
+    const code = v.error ? v.error.code : 0;
+    if (code === 4) msg = 'This browser cannot play this file\'s format or codec.';
+    else if (code === 3) msg = 'The video could not be decoded (unsupported codec profile, or a damaged file).';
+    else if (code === 2) msg = 'The file could not be read.';
+    else msg = 'The video could not be played.';
+  }
+  sl.error = msg;
+  sl.ready = false;
+  sl.texValid = false;
+  renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
+  showCodecHelp(sl);
+}
+
+function onVideoError(sl) {
+  if (!sl.file) return;
+  const code = sl.video.error ? sl.video.error.code : 0;
+  if (code === 1) return; // aborted because we switched files
+  failSlot(sl, 'error');
+}
+
+function swapSlots() {
+  if (S.playing) pause();
+  const was = imgSize();
+  S.slots.reverse();
+  applyMute();
+  const now = imgSize();
+  if (!was || !now || was.w !== now.w || was.h !== now.h) S.view.fit = true;
+  updateScrubRange();
+  seekAll(S.frame);
+  renderSlots(); updateWarnings(); requestRender();
+  toast('Swapped. "' + (A().file ? A().file.name : '–') + '" is now the Original.');
+}
+
+function applyMute() {
+  A().video.muted = S.muted;
+  B().video.muted = true; // the Encoded video is always silent
+  $('muteBtn').textContent = S.muted ? 'Muted' : 'Sound on';
+  $('muteBtn').setAttribute('aria-pressed', S.muted ? 'true' : 'false');
+}
+
+/* ---------------------------------------------------------------------
+   Slot cards in the header
+   --------------------------------------------------------------------- */
+function fpsOptionsHtml(sl) {
+  let auto;
+  if (sl.detecting) auto = 'Auto (measuring…)';
+  else if (sl.autoFps) auto = 'Auto (' + fmtFps(sl.autoFps) + ')';
+  else if (sl.fpsFailed) auto = 'Auto (unknown, using ' + FALLBACK_FPS + ')';
+  else auto = 'Auto';
+  const isStd = sl.manualFps && STD_FPS.some(([v]) => Math.abs(v - sl.manualFps) < 1e-6);
+  let h = '<option value="auto">' + esc(auto) + '</option>';
+  for (const [, label] of STD_FPS) h += '<option value="' + label + '">' + label + '</option>';
+  h += '<option value="custom">' + (sl.manualFps && !isStd ? 'Custom (' + fmtFps(sl.manualFps) + ')' : 'Custom…') + '</option>';
+  return { html: h, value: !sl.manualFps ? 'auto' : isStd ? fmtFps(sl.manualFps) : 'custom' };
+}
+
+function renderSlots() {
+  S.slots.forEach((sl, i) => {
+    const el = $('slot' + i);
+    el.classList.toggle('loaded', !!sl.file);
+    el.classList.toggle('has-error', !!sl.error);
+    let h = '<div class="slot-top"><span class="role">' + ROLES[i] + '</span><span class="fname" title="' +
+      esc(sl.file ? sl.file.name : '') + '">' + (sl.file ? esc(sl.file.name) : 'Click to choose, or drop a video here') + '</span></div>';
+    if (sl.file) {
+      const bits = [];
+      if (sl.ready) bits.push('<span><b>' + sl.w + '×' + sl.h + '</b></span>');
+      if (sl.ready) bits.push('<span>' + (sl.detecting ? 'measuring fps…' : '<b>' + fmtFps(fpsOf(sl)) + '</b> fps' + (sl.manualFps ? ' (set)' : sl.fpsFailed ? ' (assumed)' : '')) + '</span>');
+      if (sl.ready && sl.duration) bits.push('<span>' + fmtTime(sl.duration) + '</span>');
+      bits.push('<span>' + fmtBytes(sl.file.size) + '</span>');
+      if (sl.codec) bits.push('<span>' + esc(sl.codec) + '</span>');
+      if (!sl.ready && !sl.error) bits.push('<span>opening…</span>');
+      h += '<div class="meta">' + bits.join('') + '</div>';
+      if (sl.ready) {
+        const o = fpsOptionsHtml(sl);
+        h += '<div class="fpsrow"><label for="fps' + i + '">Frame rate</label><select id="fps' + i + '" data-slot="' + i + '">' + o.html + '</select></div>';
+        el.dataset.fpsValue = o.value;
+      }
+      if (sl.error) {
+        h += '<div class="slot-err">' + esc(sl.error) + ' <button data-codec="' + i + '">Why?</button></div>';
+      }
+    }
+    el.innerHTML = h;
+    const sel = el.querySelector('select');
+    if (sel) sel.value = el.dataset.fpsValue;
+  });
+  $('swapBtn').disabled = !(A().file || B().file);
+  $('empty').style.display = (A().file || B().file) ? 'none' : '';
+}
+
+function onFpsSelect(sel) {
+  const sl = S.slots[+sel.dataset.slot];
+  let val = sel.value, fps = null;
+  if (val === 'custom') {
+    const ans = prompt('Enter the frame rate in frames per second (for example 23.976):', fmtFps(fpsOf(sl)));
+    if (ans === null) { renderSlots(); return; }
+    fps = parseFloat(ans.replace(',', '.'));
+    if (!(fps > 0 && fps <= 1000)) { toast('That is not a valid frame rate.'); renderSlots(); return; }
+    const std = STD_FPS.find(([v]) => Math.abs(v - fps) < 0.0005); // e.g. typed 23.976 becomes exactly 24000/1001
+    if (std) fps = std[0];
+  } else if (val !== 'auto') {
+    fps = STD_FPS.find(([, l]) => l === val)[0];
+  }
+  changeFps(sl, () => { sl.manualFps = fps; });
+  sel.blur();
+}
+
+/* ---------------------------------------------------------------------
+   Warnings about mismatches between the two files
+   --------------------------------------------------------------------- */
+function updateWarnings() {
+  const a = A(), b = B(), out = [];
+  for (const [i, sl] of S.slots.entries()) {
+    if (sl.ready && sl.fpsFailed && !sl.manualFps) {
+      out.push('Could not measure the ' + ROLES[i] + '\'s frame rate, so ' + FALLBACK_FPS + ' fps is assumed. Pick the right rate from its "Frame rate" menu.');
+    }
+  }
+  if (a.ready && b.ready) {
+    if (a.w !== b.w || a.h !== b.h) {
+      out.push('Resolutions differ: Original ' + a.w + '×' + a.h + ', Encoded ' + b.w + '×' + b.h + '. The Encoded video is scaled to the Original\'s size for comparison.');
+    }
+    if (Math.abs((a.w / a.h) / (b.w / b.h) - 1) > 0.01) {
+      out.push('Aspect ratios differ (' + aspectStr(a.w, a.h) + ' vs ' + aspectStr(b.w, b.h) + '). The Encoded video is stretched to fill the Original\'s frame, so shapes in it will look distorted.');
+    }
+    const fa = fpsOf(a), fb = fpsOf(b);
+    if (!a.detecting && !b.detecting && Math.abs(fa - fb) > 0.001) {
+      out.push('Frame rates differ: ' + fmtFps(fa) + ' vs ' + fmtFps(fb) + ' fps. Frames can\'t match one-to-one, so the Encoded video shows whichever of its frames is on screen at the same moment.');
+    }
+    if (a.duration && b.duration && Math.abs(a.duration - b.duration) > Math.max(1.5 / fa, 0.05)) {
+      out.push('Durations differ: Original ' + fmtTime(a.duration) + ', Encoded ' + fmtTime(b.duration) + '. Frames may be cut or added; try the Encode offset buttons if the pictures don\'t line up.');
+    }
+  }
+  $('warnings').innerHTML = out.length ? '<ul>' + out.map((w) => '<li>' + esc(w) + '</li>').join('') + '</ul>' : '';
+}
+
+/* ---------------------------------------------------------------------
+   Time and frame bookkeeping
+   --------------------------------------------------------------------- */
+function frameCount() {
+  const a = A();
+  if (!a.ready || !a.duration) return 1;
+  return Math.max(1, Math.round(a.duration * fpsOf(a)));
+}
+const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
+
+// Seek to the middle of a frame. Seeking to its exact start can land on
+// the previous frame because of rounding, the middle is always safe.
+function frameMid(sl, n) {
+  const t = (n + 0.5) / fpsOf(sl);
+  return clamp(t, 0, Math.max(0, (sl.duration || t + 1) - 0.001));
+}
+
+// Which Encoded frame belongs with Original frame n.
+function encFrameFor(n) {
+  const tMid = (n + 0.5) / fpsOf(A());
+  return Math.floor(tMid * fpsOf(B()) + 1e-6) + S.offset;
+}
+
+// Move both videos to Original frame n (used whenever paused).
+function seekAll(n) {
+  n = clamp(Math.round(n), 0, frameCount() - 1);
+  S.frame = n;
+  if (A().ready) requestSeek(A(), frameMid(A(), n));
+  if (B().ready) {
+    const m = A().ready ? encFrameFor(n) : n + S.offset;
+    S.encFrame = m;
+    requestSeek(B(), frameMid(B(), Math.max(0, m)));
+  }
+  updateTimeUI();
+}
+
+// Seek "throttling": if a video is still busy with the previous seek, we
+// remember only the newest target and jump there once it finishes. This
+// keeps scrubbing smooth instead of queuing up hundreds of seeks.
+function requestSeek(sl, t) {
+  const v = sl.video;
+  if (v.seeking) { sl.pendingSeek = t; return; }
+  sl.pendingSeek = null;
+  if (Math.abs(v.currentTime - t) < 1e-6 && v.readyState >= 2) { sl.dirty = 2; requestRender(); return; }
+  v.currentTime = t;
+}
+function onSeeked(sl) {
+  if (sl.pendingSeek !== null) {
+    const t = sl.pendingSeek;
+    sl.pendingSeek = null;
+    sl.video.currentTime = t;
+  }
+  sl.dirty = 2;
+  requestRender();
+}
+
+/* ---------------------------------------------------------------------
+   Playback. The Original is the "master". The Encoded follows it: small
+   timing differences are fixed by nudging its speed slightly, and only a
+   big difference makes it jump.
+   --------------------------------------------------------------------- */
+function play() {
+  const a = A(), b = B();
+  if (!a.ready || S.playing) return;
+  if (S.frame >= frameCount() - 1) seekAll(0);
+  S.playing = true;
+  updatePlayIcon();
+  // Wait until both videos have finished any jump in progress, so they
+  // start from the same frame at the same moment.
+  const go = () => {
+    if (!S.playing) return;
+    if (S.slots.some((s) => s.ready && (s.video.seeking || s.pendingSeek !== null))) { setTimeout(go, 15); return; }
+    a.video.playbackRate = S.speed;
+    const pa = a.video.play();
+    if (pa) pa.catch((e) => { if (S.playing && e.name !== 'AbortError') { S.playing = false; updatePlayIcon(); toast('Playback could not start: ' + e.message); } });
+    if (b.ready) {
+      b.video.playbackRate = S.speed;
+      const target = a.video.currentTime + S.offset / fpsOf(b);
+      if (target >= 0 && target < (b.duration || Infinity)) b.video.play().catch(() => {});
+    }
+  };
+  go();
+}
+
+function pause() {
+  if (!S.playing) return;
+  S.playing = false;
+  const a = A();
+  a.video.pause();
+  B().video.pause();
+  // Snap both videos to the frame that was on screen.
+  const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
+  seekAll(frameAt(t, fpsOf(a)));
+  updatePlayIcon();
+}
+
+function togglePlay() { S.playing ? pause() : play(); }
+
+function onEnded() {
+  pause();
+  seekAll(frameCount() - 1);
+}
+
+function updatePlayIcon() {
+  $('playIcon').innerHTML = S.playing ? '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>' : '<path d="M4 2v12l10-6z"/>';
+  $('playBtn').setAttribute('aria-label', S.playing ? 'Pause' : 'Play');
+}
+
+const HARD_DRIFT = 0.3; // seconds of real (wall-clock) time. Beyond this the Encoded video jumps.
+function syncStep() {
+  const a = A(), b = B();
+  if (!a.ready || !b.ready) return;
+  const va = a.video, vb = b.video;
+  if (va.paused || va.seeking || vb.seeking) return;
+  const target = va.currentTime + S.offset / fpsOf(b);
+  if (target < 0 || target >= (b.duration || Infinity)) {
+    // The Encoded video has nothing to show at this moment (offset or shorter file).
+    if (!vb.paused) vb.pause();
+    if (target < 0 && vb.currentTime > 0.001) vb.currentTime = 0;
+    return;
+  }
+  if (vb.paused) { vb.currentTime = target; vb.playbackRate = S.speed; vb.play().catch(() => {}); return; }
+  // Drift is measured in video time, then converted to real time so the
+  // correction behaves the same at 0.1x as at 2x.
+  const drift = vb.currentTime - target; // positive = Encoded is ahead
+  const driftReal = drift / S.speed;
+  const hardLimit = Math.max(HARD_DRIFT, 1 / fpsOf(b) / S.speed); // never less than one frame
+  if (Math.abs(driftReal) > hardLimit) {
+    vb.currentTime = target + 0.02 * S.speed; // small lead covers the time the jump takes
+    vb.playbackRate = S.speed;
+    return;
+  }
+  const adjust = clamp(-driftReal * 2, -0.12, 0.12); // up to 12% faster or slower
+  const rate = S.speed * (1 + adjust);
+  if (Math.abs(vb.playbackRate - rate) > 0.003 * S.speed) vb.playbackRate = rate;
+}
+
+function step(delta) {
+  if (!A().ready && !B().ready) return;
+  if (S.playing) pause();
+  seekAll(S.frame + delta);
+}
+
+function nudgeOffset(d) {
+  setOffset(S.offset + d);
+}
+function setOffset(o) {
+  S.offset = Math.round(o);
+  $('offsetVal').textContent = (S.offset > 0 ? '+' : '') + S.offset + (Math.abs(S.offset) === 1 ? ' frame' : ' frames');
+  if (S.playing) {
+    const a = A(), b = B();
+    if (b.ready) {
+      const t = a.video.currentTime + S.offset / fpsOf(b);
+      if (t >= 0) b.video.currentTime = t;
+    }
+  } else {
+    seekAll(S.frame);
+  }
+}
+
+function setSpeed(x) {
+  S.speed = x;
+  A().video.playbackRate = x;
+  B().video.playbackRate = x;
+  $('speed').value = String(x);
+}
+
+function toggleMute() {
+  S.muted = !S.muted;
+  applyMute();
+}
+
+function updateScrubRange() {
+  const sc = $('scrub');
+  const n = frameCount();
+  sc.max = String(n - 1);
+  sc.disabled = !A().ready;
+  if (S.frame > n - 1) S.frame = n - 1;
+  $('durcode').textContent = A().ready && A().duration ? '/ ' + fmtTime(A().duration) : '';
+  updateTimeUI();
+}
+
+function updateTimeUI() {
+  const a = A(), b = B();
+  if (!a.ready) {
+    $('tcode').textContent = '0:00.000';
+    $('fcode').textContent = 'Frame –';
+    $('encFrame').textContent = '';
+    return;
+  }
+  const fa = fpsOf(a);
+  let n, m;
+  if (S.playing) {
+    const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
+    n = Math.min(frameAt(t, fa), frameCount() - 1);
+    if (b.ready) {
+      const tb = b.presented !== null && Math.abs(b.presented - b.video.currentTime) < 0.5 ? b.presented : b.video.currentTime;
+      m = frameAt(tb, fpsOf(b));
+    }
+  } else {
+    n = S.frame;
+    m = S.encFrame;
+  }
+  $('tcode').textContent = fmtTime(n / fa);
+  $('fcode').textContent = 'Frame ' + n + ' (0–' + (frameCount() - 1) + ')';
+  $('encFrame').textContent = b.ready ? 'Encoded frame ' + (m < 0 ? '– (before start)' : m) : '';
+  if (!S.scrubbing) $('scrub').value = String(n);
+}
+
+/* ---------------------------------------------------------------------
+   WebGL drawing. Every view (side by side, wipe, difference) is drawn by
+   the same small GPU program ("shader"), which reads both video frames
+   as textures (images stored on the graphics card).
+   --------------------------------------------------------------------- */
+const VERT = `
+attribute vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+
+const FRAG = `
+precision highp float;
+uniform sampler2D uA;
+uniform sampler2D uB;
+uniform vec2 uImg;      // Original size in pixels
+uniform vec4 uPane;     // pane x, y (from top-left), width, height in screen pixels
+uniform vec3 uXf;       // zoom, pan x, pan y
+uniform float uCanvasH;
+uniform int uMode;      // 0 Original, 1 Encoded, 2 wipe, 3 difference
+uniform float uSplit;   // wipe divider x inside the pane
+uniform float uBoost;
+uniform int uStyle;     // 0 heatmap, 1 grayscale, 2 per-channel
+uniform vec2 uHas;      // which videos have a picture
+uniform vec3 uBg;
+
+vec3 heat(float t) {
+  vec3 c0 = vec3(0.0, 0.0, 0.015), c1 = vec3(0.26, 0.04, 0.41), c2 = vec3(0.58, 0.15, 0.40);
+  vec3 c3 = vec3(0.87, 0.32, 0.23), c4 = vec3(0.99, 0.64, 0.04), c5 = vec3(0.99, 1.0, 0.64);
+  t = clamp(t, 0.0, 1.0) * 5.0;
+  if (t < 1.0) return mix(c0, c1, t);
+  if (t < 2.0) return mix(c1, c2, t - 1.0);
+  if (t < 3.0) return mix(c2, c3, t - 2.0);
+  if (t < 4.0) return mix(c3, c4, t - 3.0);
+  return mix(c4, c5, t - 4.0);
+}
+
+void main() {
+  vec2 frag = vec2(gl_FragCoord.x, uCanvasH - gl_FragCoord.y);
+  vec2 local = frag - uPane.xy;
+  vec2 uv = (local - uXf.yz) / (uXf.x * uImg);
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { gl_FragColor = vec4(uBg, 1.0); return; }
+  vec3 empty = uBg * 1.35;
+  int src = uMode;
+  if (uMode == 2) src = local.x < uSplit ? 0 : 1;
+  vec3 c;
+  if (src == 0) {
+    c = uHas.x > 0.5 ? texture2D(uA, uv).rgb : empty;
+  } else if (src == 1) {
+    c = uHas.y > 0.5 ? texture2D(uB, uv).rgb : empty;
+  } else {
+    if (uHas.x < 0.5 || uHas.y < 0.5) { gl_FragColor = vec4(empty, 1.0); return; }
+    // When zoomed in, compare one Original pixel at a time so the result
+    // doesn't change as you zoom.
+    vec2 suv = uXf.x >= 1.0 ? (floor(uv * uImg) + 0.5) / uImg : uv;
+    vec3 d = abs(texture2D(uA, suv).rgb - texture2D(uB, suv).rgb) * uBoost;
+    float m = max(d.r, max(d.g, d.b));
+    if (uStyle == 0) c = heat(m);
+    else if (uStyle == 1) c = vec3(clamp(m, 0.0, 1.0));
+    else c = clamp(d, 0.0, 1.0);
+  }
+  gl_FragColor = vec4(c, 1.0);
+}`;
+
+let gl = null, prog = null, U = {}, quad = null;
+
+function initGL() {
+  const opts = { alpha: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' };
+  gl = canvas.getContext('webgl2', opts) || canvas.getContext('webgl', opts);
+  if (!gl) { fatal('WebGL is not available in this browser, so the comparison view cannot be drawn. Try a current version of Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is turned on.'); return false; }
+  const sh = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+  gl.bindAttribLocation(prog, 0, 'aPos');
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  for (const n of ['uA', 'uB', 'uImg', 'uPane', 'uXf', 'uCanvasH', 'uMode', 'uSplit', 'uBoost', 'uStyle', 'uHas', 'uBg']) U[n] = gl.getUniformLocation(prog, n);
+  quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW); // one big triangle covers the screen
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  for (const sl of S.slots) { sl.tex = makeTex(); sl.texValid = false; sl.dirty = 2; }
+  return true;
+}
+
+function makeTex() {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+  return t;
+}
+
+let uploadErrorShown = false;
+function uploadTex(sl) {
+  const v = sl.video;
+  if (!gl || v.readyState < 2 || !v.videoWidth) return false;
+  gl.bindTexture(gl.TEXTURE_2D, sl.tex);
+  try {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+    sl.texValid = true;
+    return true;
+  } catch (e) {
+    if (!uploadErrorShown) { uploadErrorShown = true; toast('The browser refused to hand the video picture to WebGL: ' + e.message, 8000); }
+    return false;
+  }
+}
+
+function setFilter(tex, nearest) {
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  const f = nearest ? gl.NEAREST : gl.LINEAR;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+}
+
+const dpr = () => window.devicePixelRatio || 1;
+
+function imgSize() {
+  if (A().ready) return { w: A().w, h: A().h };
+  if (B().ready) return { w: B().w, h: B().h };
+  return null;
+}
+
+// Work out where each pane goes on the canvas. Side by side puts the two
+// panes left/right, or top/bottom when that gives a bigger picture.
+function layout() {
+  const cw = canvas.width, ch = canvas.height;
+  if (S.mode !== 'sbs') return { panes: [{ x: 0, y: 0, w: cw, h: ch, src: S.mode === 'wipe' ? 2 : 3 }], pw: cw, ph: ch };
+  const img = imgSize() || { w: 16, h: 9 };
+  const gap = Math.round(4 * dpr());
+  const hw = Math.max(1, Math.floor((cw - gap) / 2)), hh = Math.max(1, Math.floor((ch - gap) / 2));
+  const sH = Math.min(hw / img.w, ch / img.h), sV = Math.min(cw / img.w, hh / img.h);
+  if (sV > sH * 1.05) {
+    return { panes: [{ x: 0, y: 0, w: cw, h: hh, src: 0 }, { x: 0, y: ch - hh, w: cw, h: hh, src: 1 }], pw: cw, ph: hh, vertical: true };
+  }
+  return { panes: [{ x: 0, y: 0, w: hw, h: ch, src: 0 }, { x: cw - hw, y: 0, w: hw, h: ch, src: 1 }], pw: hw, ph: ch };
+}
+
+function fitView(pw, ph) {
+  const img = imgSize();
+  if (!img) return;
+  const s = Math.min(pw / img.w, ph / img.h);
+  S.view.s = s;
+  S.view.tx = (pw - img.w * s) / 2;
+  S.view.ty = (ph - img.h * s) / 2;
+}
+
+// Keep the view sensible when the pane size changes (window resized or a
+// different view picked): either refit, or keep the same spot centred.
+function reconcileView(pw, ph) {
+  const v = S.view;
+  if (v.fit) fitView(pw, ph);
+  else if (S.lastPane && (S.lastPane.w !== pw || S.lastPane.h !== ph)) {
+    const cx = (S.lastPane.w / 2 - v.tx) / v.s, cy = (S.lastPane.h / 2 - v.ty) / v.s;
+    v.tx = pw / 2 - cx * v.s;
+    v.ty = ph / 2 - cy * v.s;
+  }
+  S.lastPane = { w: pw, h: ph };
+}
+
+let lastLayout = null;
+function draw() {
+  if (!gl) return;
+  const r = dpr();
+  const cw = Math.max(1, Math.round(viewer.clientWidth * r)), ch = Math.max(1, Math.round(viewer.clientHeight * r));
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+  const L = layout();
+  lastLayout = L;
+  reconcileView(L.pw, L.ph);
+  gl.viewport(0, 0, cw, ch);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.clearColor(VIEWER_BG[0], VIEWER_BG[1], VIEWER_BG[2], 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  const img = imgSize();
+  if (img) {
+    const a = A(), b = B(), v = S.view;
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    // Sharp (nearest-neighbour) pixels once a video pixel covers 2+ screen pixels.
+    const sharpA = v.s >= 2;
+    const scaleB = b.ready ? v.s * img.w / b.w : v.s;
+    const sizesDiffer = a.ready && b.ready && (a.w !== b.w || a.h !== b.h);
+    const sharpB = S.mode === 'diff' && sizesDiffer ? false : scaleB >= 2;
+    gl.activeTexture(gl.TEXTURE0); setFilter(a.tex, sharpA);
+    gl.activeTexture(gl.TEXTURE1); setFilter(b.tex, sharpB);
+    gl.uniform1i(U.uA, 0);
+    gl.uniform1i(U.uB, 1);
+    gl.uniform2f(U.uImg, img.w, img.h);
+    gl.uniform3f(U.uXf, v.s, v.tx, v.ty);
+    gl.uniform1f(U.uCanvasH, ch);
+    gl.uniform1f(U.uBoost, S.boost);
+    gl.uniform1i(U.uStyle, S.style);
+    gl.uniform2f(U.uHas, a.ready && a.texValid ? 1 : 0, b.ready && b.texValid ? 1 : 0);
+    gl.uniform3f(U.uBg, VIEWER_BG[0], VIEWER_BG[1], VIEWER_BG[2]);
+    for (const p of L.panes) {
+      gl.viewport(p.x, ch - p.y - p.h, p.w, p.h);
+      gl.uniform4f(U.uPane, p.x, p.y, p.w, p.h);
+      gl.uniform1i(U.uMode, p.src);
+      gl.uniform1f(U.uSplit, S.wipe * p.w);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+  }
+  updateOverlays(L);
+}
+
+function updateOverlays(L) {
+  const r = dpr(), a = A(), b = B(), img = imgSize();
+  const labA = $('labA'), labB = $('labB'), labD = $('labD'), div = $('divider');
+  const any = !!img;
+  const encNote = a.ready && b.ready && (a.w !== b.w || a.h !== b.h) ? '<small>' + b.w + '×' + b.h + ', scaled to ' + a.w + '×' + a.h + '</small>' : '';
+  const nameA = 'Original' + (a.ready ? '' : '<small>' + (a.error ? 'cannot play' : a.file ? 'opening…' : 'not loaded') + '</small>');
+  const nameB = 'Encoded' + (b.ready ? encNote : '<small>' + (b.error ? 'cannot play' : b.file ? 'opening…' : 'not loaded') + '</small>');
+  labA.hidden = labB.hidden = labD.hidden = true;
+  div.style.display = 'none';
+  if (any) {
+    if (S.mode === 'sbs') {
+      const [pa, pb] = L.panes;
+      labA.innerHTML = nameA; labB.innerHTML = nameB;
+      labA.style.transform = labB.style.transform = '';
+      labA.style.left = (pa.x / r + 8) + 'px'; labA.style.top = (pa.y / r + 8) + 'px';
+      labB.style.left = (pb.x / r + 8) + 'px'; labB.style.top = (pb.y / r + 8) + 'px';
+      labA.hidden = labB.hidden = false;
+    } else if (S.mode === 'wipe') {
+      const x = S.wipe * L.pw / r;
+      div.style.display = 'block';
+      div.style.left = x + 'px';
+      labA.innerHTML = '◀ ' + nameA; labB.innerHTML = nameB + ' ▶';
+      labA.style.left = (x - 10) + 'px'; labA.style.top = '8px'; labA.style.transform = 'translateX(-100%)';
+      labB.style.left = (x + 10) + 'px'; labB.style.top = '8px'; labB.style.transform = '';
+      labA.hidden = labB.hidden = false;
+    } else {
+      labD.innerHTML = a.ready && b.ready ? 'Difference: Original vs Encoded<small>' + ['heatmap', 'grayscale', 'per-channel RGB'][S.style] + ', boost ×' + fmtBoost() + '</small>' : 'Difference<small>load both videos</small>';
+      labD.style.left = '8px'; labD.style.top = '8px';
+      labD.hidden = false;
+    }
+  }
+  const z = $('zoomInfo');
+  z.hidden = !any;
+  const pct = Math.round(S.view.s * 1000) / 10;
+  const zt = Math.abs(S.view.s - 1) < 1e-6 ? '1:1 (100%)' : pct + '%' + (S.view.fit ? ' (fit)' : '');
+  z.textContent = zt;
+  $('zoomVal').textContent = any ? (Math.abs(S.view.s - 1) < 1e-6 ? '1:1' : pct + '%') : '–';
+}
+
+function requestRender() { S.needsRender = true; }
+
+function fatal(msg) {
+  const f = $('fatal');
+  f.textContent = msg;
+  f.style.display = 'grid';
+}
+
+// The main loop runs once per screen refresh.
+function loop() {
+  requestAnimationFrame(loop);
+  if (S.playing) { syncStep(); updateTimeUI(); }
+  let uploaded = false;
+  for (const sl of S.slots) {
+    if (!sl.ready) continue;
+    if (sl.dirty > 0 || (S.playing && !HAS_RVFC)) {
+      if (uploadTex(sl)) uploaded = true;
+      if (sl.dirty > 0) sl.dirty--;
+    }
+  }
+  if (uploaded || S.needsRender) { S.needsRender = false; draw(); }
+  // Show a "Decoding…" badge while a jump to a new frame is still in progress,
+  // so the picture is never mistaken for the frame number shown below.
+  const busy = !S.playing && S.slots.some((s) => s.ready && (s.video.seeking || s.pendingSeek !== null));
+  if (busyEl.hidden === busy) busyEl.hidden = !busy;
+}
+const busyEl = $('busy');
+
+/* ---------------------------------------------------------------------
+   Zoom and pan. The same zoom and pan apply to every pane, so both sides
+   always show the same spot.
+   --------------------------------------------------------------------- */
+function paneSize() {
+  return S.lastPane || { w: canvas.width, h: canvas.height };
+}
+const MAX_ZOOM = 64;
+function minZoom() {
+  const img = imgSize(), p = paneSize();
+  if (!img) return 0.01;
+  return Math.min(0.5, Math.min(p.w / img.w, p.h / img.h) * 0.25);
+}
+function zoomAt(mx, my, factor) {
+  if (!imgSize()) return;
+  const v = S.view;
+  const s2 = clamp(v.s * factor, minZoom(), MAX_ZOOM);
+  v.tx = mx - (mx - v.tx) * (s2 / v.s);
+  v.ty = my - (my - v.ty) * (s2 / v.s);
+  v.s = s2;
+  v.fit = false;
+  requestRender();
+}
+function zoomBy(f) {
+  const p = paneSize();
+  zoomAt(p.w / 2, p.h / 2, f);
+}
+function fitNow() {
+  S.view.fit = true;
+  requestRender();
+}
+function oneToOne(mx, my) {
+  if (!imgSize()) return;
+  const p = paneSize(), v = S.view;
+  if (mx === undefined) { mx = p.w / 2; my = p.h / 2; }
+  zoomAt(mx, my, 1 / v.s);
+  v.s = 1;
+  v.tx = Math.round(v.tx);
+  v.ty = Math.round(v.ty);
+  requestRender();
+}
+
+// Turn a mouse position into a position inside the pane under it.
+function paneLocal(e) {
+  const rect = canvas.getBoundingClientRect(), r = dpr();
+  const x = (e.clientX - rect.left) * r, y = (e.clientY - rect.top) * r;
+  const L = lastLayout || layout();
+  let pane = L.panes[0];
+  for (const p of L.panes) if (x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h) pane = p;
+  return { x: x - pane.x, y: y - pane.y, pane, cx: x, cy: y };
+}
+function nearDivider(p) {
+  return S.mode === 'wipe' && Math.abs(p.x - S.wipe * p.pane.w) < 14 * dpr();
+}
+
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !imgSize()) return;
+  canvas.setPointerCapture(e.pointerId);
+  const p = paneLocal(e);
+  if (nearDivider(p)) drag = { type: 'wipe' };
+  else { drag = { type: 'pan', x: p.cx, y: p.cy, tx: S.view.tx, ty: S.view.ty }; canvas.classList.add('panning'); }
+});
+canvas.addEventListener('pointermove', (e) => {
+  const p = paneLocal(e);
+  if (!drag) { canvas.classList.toggle('wipe-hover', nearDivider(p)); return; }
+  if (drag.type === 'wipe') {
+    S.wipe = clamp(p.x / p.pane.w, 0, 1);
+  } else {
+    S.view.tx = drag.tx + (p.cx - drag.x);
+    S.view.ty = drag.ty + (p.cy - drag.y);
+    S.view.fit = false;
+  }
+  requestRender();
+});
+const endDrag = () => { drag = null; canvas.classList.remove('panning'); };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', (e) => {
+  if (!imgSize()) return;
+  e.preventDefault();
+  const p = paneLocal(e);
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= 400;
+  zoomAt(p.x, p.y, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)));
+}, { passive: false });
+canvas.addEventListener('dblclick', (e) => {
+  const p = paneLocal(e);
+  if (nearDivider(p)) return;
+  if (Math.abs(S.view.s - 1) < 1e-6) fitNow(); else oneToOne(p.x, p.y);
+});
+
+/* ---------------------------------------------------------------------
+   Codec help window
+   --------------------------------------------------------------------- */
+const CODEC_TESTS = [
+  ['H.264 (AVC)', ['video/mp4; codecs="avc1.640028"', 'video/mp4; codecs="avc1.42E01E"']],
+  ['HEVC (H.265)', ['video/mp4; codecs="hvc1.1.6.L120.90"', 'video/mp4; codecs="hev1.1.6.L120.90"']],
+  ['AV1', ['video/mp4; codecs="av01.0.08M.08"', 'video/webm; codecs="av01.0.08M.08"']],
+  ['VP9', ['video/webm; codecs="vp9"', 'video/mp4; codecs="vp09.00.40.08"']],
+];
+function showCodecHelp(sl) {
+  const probe = document.createElement('video');
+  const rank = { probably: 2, maybe: 1, '': 0 };
+  let rows = '<tr><th>Codec</th><th>This browser</th></tr>';
+  for (const [name, types] of CODEC_TESTS) {
+    let best = '';
+    for (const t of types) { const r = probe.canPlayType(t); if (rank[r] > rank[best]) best = r; }
+    const cls = best === 'probably' ? 'yes' : best === 'maybe' ? 'maybe' : 'no';
+    const txt = best === 'probably' ? 'Supported ("probably")' : best === 'maybe' ? 'Possibly ("maybe")' : 'Not supported';
+    rows += '<tr><td>' + name + '</td><td class="' + cls + '">' + txt + '</td></tr>';
+  }
+  $('codecTable').innerHTML = rows;
+  const role = sl ? ROLES[S.slots.indexOf(sl)] : null;
+  $('codecErr').innerHTML = sl && sl.error
+    ? '<div class="errbox"><b>' + esc(role) + ': ' + esc(sl.file ? sl.file.name : '') + '</b><br>' + esc(sl.error) +
+      (sl.codec ? '<br>This file\'s video codec looks like <b>' + esc(sl.codec) + '</b>.' : '') + '</div>'
+    : '';
+  openModal('codecModal');
+}
+
+/* ---------------------------------------------------------------------
+   Modals
+   --------------------------------------------------------------------- */
+function openModal(id) { $(id).classList.add('open'); }
+function closeModals() { document.querySelectorAll('.modal.open').forEach((m) => m.classList.remove('open')); }
+function anyModalOpen() { return !!document.querySelector('.modal.open'); }
+document.querySelectorAll('.modal').forEach((m) => {
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.hasAttribute('data-close')) m.classList.remove('open'); });
+});
+
+/* ---------------------------------------------------------------------
+   View mode and difference settings
+   --------------------------------------------------------------------- */
+function setMode(m) {
+  S.mode = m;
+  for (const k of ['sbs', 'wipe', 'diff']) $('mode-' + k).setAttribute('aria-pressed', k === m ? 'true' : 'false');
+  $('diffOpts').hidden = m !== 'diff';
+  canvas.classList.remove('wipe-hover');
+  requestRender();
+}
+const fmtBoost = () => (S.boost < 10 ? S.boost.toFixed(1).replace(/\.0$/, '') : Math.round(S.boost));
+function updateDiffUI() {
+  S.boost = Math.pow(2, parseFloat($('boost').value));
+  S.style = parseInt($('diffStyle').value, 10);
+  $('boostVal').textContent = '×' + fmtBoost();
+  $('legend').style.background = S.style === 0
+    ? 'linear-gradient(90deg, #000004, #42096a, #942640, #de5238, #fca30a, #fcffa3)'
+    : S.style === 1 ? 'linear-gradient(90deg, #000, #fff)'
+    : 'linear-gradient(90deg, #000, #f00 33%, #0f0 66%, #00f)';
+  requestRender();
+}
+
+/* ---------------------------------------------------------------------
+   Wiring up buttons, file pickers and drag-and-drop
+   --------------------------------------------------------------------- */
+for (const i of [0, 1]) {
+  const el = $('slot' + i), input = $('file' + i);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('select, label, button')) {
+      const b = e.target.closest('button[data-codec]');
+      if (b) showCodecHelp(S.slots[+b.dataset.codec]);
+      return;
+    }
+    input.click();
+  });
+  el.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter') && e.target === el) { e.preventDefault(); input.click(); }
+  });
+  el.addEventListener('change', (e) => { if (e.target.tagName === 'SELECT') onFpsSelect(e.target); });
+  input.addEventListener('change', () => { if (input.files.length) handleFiles(input.files, i); input.value = ''; });
+  el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); el.classList.add('dragover'); });
+  el.addEventListener('dragleave', () => el.classList.remove('dragover'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    el.classList.remove('dragover');
+    viewer.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files, i);
+  });
+}
+$('pickA').addEventListener('click', () => $('file0').click());
+$('pickB').addEventListener('click', () => $('file1').click());
+
+// Dropping anywhere else on the page: fill the empty slot(s).
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragDepth++; viewer.classList.add('dragover'); } });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; viewer.classList.remove('dragover'); } });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  viewer.classList.remove('dragover');
+  if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files, null);
+});
+
+$('swapBtn').addEventListener('click', swapSlots);
+$('helpBtn').addEventListener('click', () => openModal('helpModal'));
+$('codecBtn').addEventListener('click', () => showCodecHelp(A().error ? A() : B().error ? B() : null));
+$('playBtn').addEventListener('click', togglePlay);
+$('back1').addEventListener('click', () => step(-1));
+$('fwd1').addEventListener('click', () => step(1));
+$('back10').addEventListener('click', () => step(-10));
+$('fwd10').addEventListener('click', () => step(10));
+$('muteBtn').addEventListener('click', toggleMute);
+$('offMinus').addEventListener('click', () => nudgeOffset(-1));
+$('offPlus').addEventListener('click', () => nudgeOffset(1));
+$('offsetVal').addEventListener('click', () => setOffset(0));
+$('fitBtn').addEventListener('click', fitNow);
+$('oneBtn').addEventListener('click', () => oneToOne());
+$('zoomIn').addEventListener('click', () => zoomBy(1.25));
+$('zoomOut').addEventListener('click', () => zoomBy(0.8));
+for (const k of ['sbs', 'wipe', 'diff']) $('mode-' + k).addEventListener('click', () => setMode(k));
+$('boost').addEventListener('input', updateDiffUI);
+$('diffStyle').addEventListener('change', (e) => { updateDiffUI(); e.target.blur(); });
+
+const speedSel = $('speed');
+for (const s of SPEEDS) {
+  const o = document.createElement('option');
+  o.value = String(s);
+  o.textContent = s + '×';
+  speedSel.appendChild(o);
+}
+speedSel.value = '1';
+speedSel.addEventListener('change', () => { setSpeed(parseFloat(speedSel.value)); speedSel.blur(); });
+
+const scrub = $('scrub');
+scrub.addEventListener('pointerdown', () => { S.scrubbing = true; if (S.playing) pause(); });
+scrub.addEventListener('input', () => {
+  if (S.playing) pause();
+  seekAll(parseInt(scrub.value, 10));
+});
+const endScrub = () => { S.scrubbing = false; updateTimeUI(); };
+scrub.addEventListener('pointerup', endScrub);
+scrub.addEventListener('change', endScrub);
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts
+   --------------------------------------------------------------------- */
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  const typing = t && ((t.tagName === 'INPUT' && !['range', 'button', 'checkbox', 'file'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  if (typing) return;
+  if (t && t.tagName === 'SELECT' && ['ArrowUp', 'ArrowDown', 'Enter', ' '].includes(e.key)) return; // let menus work
+  if (anyModalOpen() && e.key !== '?' && e.key !== 'Escape') return;
+  let handled = true;
+  switch (e.key) {
+    case ' ': case 'Spacebar': togglePlay(); break;
+    case 'ArrowLeft': step(e.shiftKey ? -10 : -1); break;
+    case 'ArrowRight': step(e.shiftKey ? 10 : 1); break;
+    case '1': setMode('sbs'); break;
+    case '2': setMode('wipe'); break;
+    case '3': setMode('diff'); break;
+    case '[': nudgeOffset(-1); break;
+    case ']': nudgeOffset(1); break;
+    case '0': fitNow(); break;
+    case 'z': case 'Z': oneToOne(); break;
+    case '+': case '=': zoomBy(1.25); break;
+    case '-': case '_': zoomBy(0.8); break;
+    case 'm': case 'M': toggleMute(); break;
+    case '?': if ($('helpModal').classList.contains('open')) closeModals(); else { closeModals(); openModal('helpModal'); } break;
+    case 'Escape': closeModals(); break;
+    default: handled = false;
+  }
+  if (handled) e.preventDefault();
+});
+
+/* ---------------------------------------------------------------------
+   Start up
+   --------------------------------------------------------------------- */
+canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); gl = null; });
+canvas.addEventListener('webglcontextrestored', () => { try { initGL(); requestRender(); } catch (err) { fatal('WebGL failed to restart: ' + err.message); } });
+new ResizeObserver(requestRender).observe(viewer);
+window.addEventListener('resize', requestRender);
+
+try {
+  initGL();
+} catch (err) {
+  fatal('WebGL setup failed: ' + err.message);
+}
+updateDiffUI();
+renderSlots();
+applyMute();
+updateScrubRange();
+setOffset(0);
+requestAnimationFrame(loop);
+
+// Exposed only to make automated testing easier. Not needed for normal use.
+window.__a2o = { S, seekAll, play, pause, step, setMode, zoomAt, fitNow, oneToOne, handleFiles, fpsOf };
+})();
+</script>
+</body>
+</html>
