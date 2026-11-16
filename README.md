@@ -101,14 +101,14 @@ A **codec** is the method used to compress a video, for example H.264 or AV1. To
 
 When a file can't be played, the tool says so and opens a **Codecs** window. That window shows what *your* browser reports it can play, which is the most reliable answer for your machine. You can open it at any time with the **Codecs** button.
 
-General picture (as of late 2026; check the links for current details):
+General picture (checked against caniuse.com's published data, November 2026; check the links for current details):
 
 | Codec | Usually works in |
 | --- | --- |
 | **H.264 (AVC)** | All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons. |
-| **HEVC (H.265)** | Safari on macOS and iOS. Chrome and Edge on Windows, macOS, ChromeOS and Android when the graphics hardware can decode HEVC (Edge on Windows may also need Microsoft's HEVC Video Extensions). Firefox support is limited and depends on platform and hardware. Usually not available on Linux. |
-| **AV1** | Chrome, Firefox, Opera and recent Edge. Safari only on Apple devices with a hardware AV1 decoder (roughly: Macs with M3 chips or newer, iPhone 15 Pro or newer). |
-| **VP9** | Chrome, Edge, Firefox and Opera. Safari on recent macOS and iOS versions, with some limits. |
+| **HEVC (H.265)** | Safari on macOS and iOS. Chrome and Edge on macOS and Android. On Windows, Chrome and Edge need graphics hardware that can decode HEVC, and Edge also needs Microsoft's HEVC Video Extensions from the Microsoft Store. Firefox 137 or newer when the graphics hardware can decode HEVC. On Linux and ChromeOS only Chrome with working hardware decoding, so it is often missing there. |
+| **AV1** | Chrome, Firefox, Opera and Edge 121 or newer. Safari only on Apple devices with a hardware AV1 decoder (for example Macs with M3 chips or newer, iPhone 15 Pro or newer). |
+| **VP9** | Chrome, Edge, Firefox and Opera. Safari 16 or newer on Mac, and Safari on iPhone and iPad from iOS 17.4. Safari does not support transparency (alpha) in WebM video. |
 
 Up-to-date tables: [HEVC](https://caniuse.com/hevc) · [AV1](https://caniuse.com/av1) · [WebM / VP9](https://caniuse.com/webm) · [MP4 / H.264](https://caniuse.com/mpeg4)
 

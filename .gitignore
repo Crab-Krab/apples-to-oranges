@@ -1,0 +1,12 @@
+# Test videos: keep them out of the repository
+*.mp4
+*.m4v
+*.mov
+*.mkv
+*.webm
+*.avi
+*.ts
+
+# Files created by macOS and Windows
+.DS_Store
+Thumbs.db

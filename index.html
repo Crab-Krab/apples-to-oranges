@@ -366,9 +366,9 @@
     <table>
       <tr><th>Codec</th><th>Where it usually works</th></tr>
       <tr><td>H.264 (AVC)</td><td>All current versions of Chrome, Edge, Firefox, Safari and Opera. Some Linux builds of Chromium and Firefox leave it out for licensing reasons.</td></tr>
-      <tr><td>HEVC (H.265)</td><td>Safari on macOS and iOS. Chrome and Edge on Windows, macOS, ChromeOS and Android, but only when the graphics hardware can decode HEVC (Edge on Windows may also need Microsoft's HEVC Video Extensions). Firefox support is limited and depends on platform and hardware. Usually not available on Linux.</td></tr>
-      <tr><td>AV1</td><td>Chrome, Firefox, Opera and recent Edge. Safari only on Apple devices with a hardware AV1 decoder (roughly: Macs with M3 chips or newer, iPhone 15 Pro or newer).</td></tr>
-      <tr><td>VP9</td><td>Chrome, Edge, Firefox and Opera. Safari on recent macOS and iOS versions, with some limits.</td></tr>
+      <tr><td>HEVC (H.265)</td><td>Safari on macOS and iOS. Chrome and Edge on macOS and Android. On Windows, Chrome and Edge need graphics hardware that can decode HEVC, and Edge also needs Microsoft's HEVC Video Extensions from the Microsoft Store. Firefox 137 or newer when the graphics hardware can decode HEVC. On Linux and ChromeOS only Chrome with working hardware decoding, so it is often missing there.</td></tr>
+      <tr><td>AV1</td><td>Chrome, Firefox, Opera and Edge 121 or newer. Safari only on Apple devices with a hardware AV1 decoder (for example Macs with M3 chips or newer, iPhone 15 Pro or newer).</td></tr>
+      <tr><td>VP9</td><td>Chrome, Edge, Firefox and Opera. Safari 16 or newer on Mac, and Safari on iPhone and iPad from iOS 17.4. Safari does not support transparency (alpha) in WebM video.</td></tr>
     </table>
     <p>If a file won't play, try a different browser (Chrome and Edge cover the most codecs on Windows, Safari covers HEVC best on a Mac), or check the up-to-date tables at
       <a href="https://caniuse.com/hevc" target="_blank" rel="noopener">caniuse.com/hevc</a>,
