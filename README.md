@@ -26,7 +26,7 @@ It is a single web page (`index.html`). There is nothing to install and no accou
 
 ### Load your videos
 
-- Click the **Original** or **Encoded** box at the top to pick a file, or drag a file onto it.
+- Click the **Original** or **Encoded** box at the top (or its **Choose** button) to pick a file, or drag a file onto it.
 - You can also drop **both files at once** anywhere on the page. The tool guesses that the **larger file is the Original**, because encoding usually makes files smaller. If it guessed wrong, click **⇄ Swap**.
 - Dropping a single file somewhere other than a box fills whichever slot is empty. If both slots are full, it replaces the Encoded video. This makes it quick to compare several encodes against the same original.
 
@@ -166,6 +166,7 @@ npm test
 
 On Linux, use `npx playwright install --with-deps chromium` if the browser is missing system libraries.
 
+- **Privacy is enforced by the page itself.** A security policy built into `index.html` (a Content-Security-Policy) stops it from loading or sending anything over the network, and a test checks this.
 - **No videos are stored in the repository.** The first run makes its test clips with ffmpeg and keeps them in `tests/.media/`. Every frame of a clip has its own frame number painted on it as a row of black and white stripes, so a test can read back exactly which frame is on screen.
 - **What is checked:** the page loads without errors and contacts nothing on the network, paused frame accuracy (random jumps, single steps, rapid scrubbing, encode offset), frame-rate detection, pausing (in slow motion and at full speed), that the frame counter matches the picture during 60 fps playback, the Difference view, that the 1:1 view is pixel-exact (at 100% and 150% screen scaling), codec labels, and that a hostile file name is shown as plain text.
 - GitHub runs the same tests on every push and pull request (see `.github/workflows/test.yml`).

@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Security policy: the page may run its own built-in code, show the videos you pick
+     (blob: links) and its own icon (data:), and nothing else. It cannot load or send
+     anything over the network. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Apples to Oranges</title>
 <meta name="description" content="Compare an original video against an encoded version, frame by frame, right in your browser. Files never leave your computer.">
@@ -17,7 +21,7 @@
     --panel-3: #444444;
     --line: #4a4a4a;
     --text: #e4e4e4;
-    --text-dim: #a0a0a0;
+    --text-dim: #a6a6a6; /* at least 4.5:1 contrast on every panel color it's used on */
     --text-faint: #7a7a7a;
     --viewer: #1b1b1b;
     --active-bg: #d6d6d6;
@@ -91,6 +95,7 @@
   .slot-top { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
   .role { font-weight: 650; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--text); flex: none; }
   .fname { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .slot-top .pick { margin-left: auto; flex: none; padding: 1px 8px; font-size: 12px; }
   .meta { color: var(--text-dim); font-size: 12px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 2px 10px; }
   .meta b { color: var(--text); font-weight: 600; }
   .fpsrow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); margin-top: 3px; }
@@ -234,9 +239,9 @@
     <h1>Apples to Oranges</h1>
   </div>
   <div class="slots">
-    <div class="slot" id="slot0" tabindex="0" role="button" aria-label="Original video: click to choose a file or drop one here"></div>
+    <div class="slot" id="slot0" role="group" aria-label="Original video"></div>
     <button id="swapBtn" title="Swap which file is the Original and which is the Encoded" disabled>⇄ Swap</button>
-    <div class="slot" id="slot1" tabindex="0" role="button" aria-label="Encoded video: click to choose a file or drop one here"></div>
+    <div class="slot" id="slot1" role="group" aria-label="Encoded video"></div>
   </div>
   <div class="head-right">
     <button id="codecBtn" title="Which browsers can play which codecs">Codecs</button>
@@ -907,7 +912,8 @@ function renderSlots() {
     el.classList.toggle('loaded', !!sl.file);
     el.classList.toggle('has-error', !!sl.error);
     let h = '<div class="slot-top"><span class="role">' + ROLES[i] + '</span><span class="fname" title="' +
-      esc(sl.file ? sl.file.name : '') + '">' + (sl.file ? esc(sl.file.name) : 'Click to choose, or drop a video here') + '</span></div>';
+      esc(sl.file ? sl.file.name : '') + '">' + (sl.file ? esc(sl.file.name) : 'Click to choose, or drop a video here') + '</span>' +
+      '<button class="pick" data-pick="' + i + '" aria-label="Choose the ' + ROLES[i] + ' video file">' + (sl.file ? 'Change' : 'Choose') + '</button></div>';
     if (sl.file) {
       const bits = [];
       if (sl.ready) bits.push('<span><b>' + sl.w + '×' + sl.h + '</b></span>');
@@ -926,9 +932,18 @@ function renderSlots() {
         h += '<div class="slot-err">' + esc(sl.error) + ' <button data-codec="' + i + '">Why?</button></div>';
       }
     }
-    el.innerHTML = h;
+    // Rebuild only when something changed. Rebuilding closes an open
+    // Frame rate menu and drops keyboard focus, so put focus back too.
+    if (el.dataset.html !== h) {
+      el.dataset.html = h;
+      const focused = el.contains(document.activeElement) ? document.activeElement : null;
+      const refocus = focused && (focused.id ? '#' + focused.id : focused.dataset.pick !== undefined ? 'button.pick' : focused.dataset.codec !== undefined ? 'button[data-codec]' : null);
+      el.innerHTML = h;
+      if (refocus) { const again = el.querySelector(refocus); if (again) again.focus(); }
+    }
+    // Always show the current choice, e.g. after a cancelled "Custom…" prompt.
     const sel = el.querySelector('select');
-    if (sel) sel.value = el.dataset.fpsValue;
+    if (sel && sel.value !== el.dataset.fpsValue) sel.value = el.dataset.fpsValue;
   });
   $('swapBtn').disabled = !(A().file || B().file);
   $('empty').style.display = (A().file || B().file) ? 'none' : '';
@@ -1660,11 +1675,35 @@ function showCodecHelp(sl) {
 /* ---------------------------------------------------------------------
    Modals
    --------------------------------------------------------------------- */
-function openModal(id) { $(id).classList.add('open'); }
-function closeModals() { document.querySelectorAll('.modal.open').forEach((m) => m.classList.remove('open')); }
+// Pop-ups take keyboard focus when they open, keep Tab inside themselves,
+// and hand focus back to where it was when they close.
+let focusBeforeModal = null;
+const focusables = (m) => [...m.querySelectorAll('button, a[href], select, input, [tabindex]:not([tabindex="-1"])')].filter((x) => !x.disabled && x.offsetParent !== null);
+function openModal(id) {
+  const m = $(id);
+  if (!anyModalOpen()) focusBeforeModal = document.activeElement;
+  m.classList.add('open');
+  const first = focusables(m)[0];
+  if (first) first.focus();
+}
+function closeModals() {
+  const open = document.querySelectorAll('.modal.open');
+  open.forEach((m) => m.classList.remove('open'));
+  if (open.length && focusBeforeModal && document.contains(focusBeforeModal)) focusBeforeModal.focus();
+  focusBeforeModal = null;
+}
+document.addEventListener('keydown', (e) => {
+  const m = document.querySelector('.modal.open');
+  if (!m || e.key !== 'Tab') return;
+  const f = focusables(m);
+  if (!f.length) return;
+  const i = f.indexOf(document.activeElement);
+  if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+  else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+});
 function anyModalOpen() { return !!document.querySelector('.modal.open'); }
 document.querySelectorAll('.modal').forEach((m) => {
-  m.addEventListener('click', (e) => { if (e.target === m || e.target.hasAttribute('data-close')) m.classList.remove('open'); });
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.hasAttribute('data-close')) closeModals(); });
 });
 
 /* ---------------------------------------------------------------------
@@ -1694,16 +1733,15 @@ function updateDiffUI() {
    --------------------------------------------------------------------- */
 for (const i of [0, 1]) {
   const el = $('slot' + i), input = $('file' + i);
+  // Clicking anywhere on the box opens the file picker (a mouse shortcut).
+  // Keyboard users reach the same thing with the box's "Choose" button.
   el.addEventListener('click', (e) => {
-    if (e.target.closest('select, label, button')) {
+    if (e.target.closest('select, label, button:not(.pick)')) {
       const b = e.target.closest('button[data-codec]');
       if (b) showCodecHelp(S.slots[+b.dataset.codec]);
       return;
     }
     input.click();
-  });
-  el.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter') && e.target === el) { e.preventDefault(); input.click(); }
   });
   el.addEventListener('change', (e) => { if (e.target.tagName === 'SELECT') onFpsSelect(e.target); });
   input.addEventListener('change', () => { if (input.files.length) handleFiles(input.files, i); input.value = ''; });
@@ -1780,6 +1818,10 @@ document.addEventListener('keydown', (e) => {
   const typing = t && ((t.tagName === 'INPUT' && !['range', 'button', 'checkbox', 'file'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable);
   if (typing) return;
   if (t && t.tagName === 'SELECT' && ['ArrowUp', 'ArrowDown', 'Enter', ' '].includes(e.key)) return; // let menus work
+  // Space and Enter press a focused button or link, as everywhere else.
+  if (t && t.closest && t.closest('button, a[href]') && [' ', 'Spacebar', 'Enter'].includes(e.key)) return;
+  // Arrow keys and friends move a focused slider instead of stepping frames.
+  if (t && t.tagName === 'INPUT' && t.type === 'range' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) return;
   if (anyModalOpen() && e.key !== '?' && e.key !== 'Escape') return;
   let handled = true;
   switch (e.key) {
