@@ -122,10 +122,29 @@ for (const [name, encoder, extra, label, hint] of CODEC_RECIPES) {
 }
 codecs.push(codecClip('hevc-main-8bit-hev1.mp4', 'libx265', [...X265, '-pix_fmt', 'yuv420p', '-tag:v', 'hev1'], 'HEVC (Main, 8-bit)', false));
 
+// A lossless checkerboard of single black and white pixels. Shown at 1:1,
+// every screen pixel must be pure black or pure white. Any grey means the
+// browser rescaled the picture (see sharpness.spec.js).
+const checker = {
+  file: 'checker-lossless.webm',
+  path: path.join(MEDIA_DIR, 'checker-lossless.webm'),
+  title: 'lossless 1-pixel checkerboard',
+  container: 'webm',
+  rate: RATES[1],
+  fps: 30,
+  frames: 30,
+  args: [
+    '-f', 'lavfi', '-i', 'color=c=gray:s=640x360:r=30:d=1',
+    '-vf', "geq=lum='255*mod(X+Y,2)':cb=128:cr=128,format=yuv420p",
+    '-c:v', 'libvpx-vp9', '-lossless', '1', '-an',
+  ],
+};
+
 const allClips = [
   ...RATES.flatMap((rate) => CONTAINERS.map((container) => barcode[rate.label][container.ext])),
   lossy,
+  checker,
   ...codecs,
 ];
 
-module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, codecs, allClips };
+module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, checker, codecs, allClips };

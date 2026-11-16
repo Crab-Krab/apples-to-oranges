@@ -7,23 +7,20 @@
  * reads which frame the page had drawn at the moment of pausing, lets the
  * page settle, and checks that both videos now show that same frame.
  *
- * KNOWN BUG, EXPECTED TO FAIL: when the Original is a WebM (or MKV) file,
- * pausing often lands one frame too early. An audit measured this in 20 to
- * 47 percent of pauses, depending on the frame rate.
+ * FIXED BUG: when the Original was a WebM (or MKV) file, pausing often
+ * landed one frame too early. An audit measured this in 20 to 47 percent of
+ * pauses, depending on the frame rate.
  *
  * Why: WebM and MKV store each frame's time rounded to a whole millisecond.
  * Frame 1 of a 30 fps video starts at 0.0333 seconds but is stored as 0.033.
- * In index.html, pause() passes that time to frameAt(), which multiplies it
- * by the frame rate and rounds down: 0.033 x 30 = 0.99, which rounds down to
- * frame 0 instead of frame 1. MP4 stores exact times and is not affected.
+ * pause() used to multiply that by the frame rate and round down:
+ * 0.033 x 30 = 0.99, which rounds down to frame 0 instead of frame 1.
+ * frameOnScreen() in index.html now rounds frame start times to the nearest
+ * frame instead.
  *
- * The WebM tests below are therefore marked as "expected to fail". They
- * still run every time. Playwright counts an expected failure as a pass,
- * and reports a failure if such a test unexpectedly starts passing.
- *
- * WHEN THE BUG IS FIXED: those tests will show "Expected to fail, but
- * passed". Set PAUSE_BUG_IS_FIXED to true below and they become ordinary
- * tests.
+ * PAUSE_BUG_IS_FIXED below is kept as a switch. Setting it to false marks
+ * the WebM tests as "expected to fail" again, for checking an older copy of
+ * index.html.
  *
  * Why slow motion: to know for certain which frame was on screen, the test
  * waits until the page has drawn the same frame on two screen refreshes in
@@ -36,7 +33,7 @@
 const { test, expect, loadPair, report, seek } = require('./support/app');
 const { RATES, barcode } = require('./support/clips');
 
-const PAUSE_BUG_IS_FIXED = false;
+const PAUSE_BUG_IS_FIXED = true;
 const KNOWN_BUG_NOTE =
   'Known bug in index.html, pause() and frameAt(): WebM and MKV round frame times to whole ' +
   'milliseconds, so pausing with such a file as the Original often lands one frame early.';

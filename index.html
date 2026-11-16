@@ -989,15 +989,19 @@ function frameCount() {
 }
 const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
 
-// The time of the frame on screen during playback. Best is the time of the
+// The frame number on screen during playback. Best is the time of the
 // picture we last drew (texTime). Next best is the last frame the browser
 // reported (presented), which at 60 fps can be one frame older than the
 // picture. The video's own clock is the fallback. A time far from the
 // clock is left over from before a jump and is ignored.
-function timeOnScreen(sl) {
-  const now = sl.video.currentTime;
-  for (const t of [sl.texTime, sl.presented]) if (t !== null && Math.abs(t - now) < 0.5) return t;
-  return now;
+// texTime and presented are the START times of frames. WebM and MKV store those in whole
+// milliseconds (frame 7 at 30 fps is 0.233 s, and 0.233 x 30 = 6.99), so
+// they are rounded to the nearest frame. The video clock can be anywhere
+// inside a frame, so it is rounded down.
+function frameOnScreen(sl) {
+  const now = sl.video.currentTime, fps = fpsOf(sl);
+  for (const t of [sl.texTime, sl.presented]) if (t !== null && Math.abs(t - now) < 0.5) return Math.max(0, Math.round(t * fps));
+  return frameAt(now, fps);
 }
 
 // Seek to the middle of a frame. Seeking to its exact start can land on
@@ -1081,7 +1085,7 @@ function pause() {
   a.video.pause();
   B().video.pause();
   // Snap both videos to the frame that was on screen.
-  seekAll(frameAt(timeOnScreen(a), fpsOf(a)));
+  seekAll(frameOnScreen(a));
   updatePlayIcon();
 }
 
@@ -1182,9 +1186,9 @@ function updateTimeUI() {
   const fa = fpsOf(a);
   let n, m;
   if (S.playing) {
-    n = Math.min(frameAt(timeOnScreen(a), fa), frameCount() - 1);
+    n = Math.min(frameOnScreen(a), frameCount() - 1);
     if (b.ready) {
-      m = frameAt(timeOnScreen(b), fpsOf(b));
+      m = frameOnScreen(b);
     }
   } else {
     n = S.frame;
@@ -1395,11 +1399,29 @@ function reconcileView(pw, ph) {
   S.lastPane = { w: pw, h: ph };
 }
 
+// The canvas must have exactly as many pixels as the screen area it covers,
+// or the browser rescales it and blurs the 1:1 view. The viewer's height is
+// often fractional (e.g. 592.625 px), so rounding clientHeight can be one
+// pixel off. Where the browser reports the exact device-pixel size, use it.
+let exactCanvasSize = null;
+try {
+  new ResizeObserver((entries) => {
+    const box = entries[entries.length - 1].devicePixelContentBoxSize;
+    if (box && box[0]) { exactCanvasSize = { w: box[0].inlineSize, h: box[0].blockSize }; requestRender(); }
+  }).observe(canvas, { box: 'device-pixel-content-box' });
+} catch (e) { /* not supported (e.g. some Safari versions): use the estimate below */ }
+
 let lastLayout = null;
 function draw() {
   if (!gl) return;
   const r = dpr();
-  const cw = Math.max(1, Math.round(viewer.clientWidth * r)), ch = Math.max(1, Math.round(viewer.clientHeight * r));
+  // Trust the exact size only when it agrees with the estimate to within a
+  // pixel. Some browsers (and simulated screen scaling in test tools) report
+  // it in the wrong units.
+  const ew = viewer.clientWidth * r, eh = viewer.clientHeight * r;
+  const exact = exactCanvasSize && Math.abs(exactCanvasSize.w - ew) <= 1.5 && Math.abs(exactCanvasSize.h - eh) <= 1.5;
+  const cw = Math.max(1, exact ? exactCanvasSize.w : Math.round(ew));
+  const ch = Math.max(1, exact ? exactCanvasSize.h : Math.round(eh));
   if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
   const L = layout();
   lastLayout = L;
@@ -1424,7 +1446,10 @@ function draw() {
     gl.uniform1i(U.uA, 0);
     gl.uniform1i(U.uB, 1);
     gl.uniform2f(U.uImg, img.w, img.h);
-    gl.uniform3f(U.uXf, v.s, v.tx, v.ty);
+    // At a whole-number zoom, a fractional pan would place video pixels
+    // between screen pixels and blur them, so snap the pan to whole pixels.
+    const whole = Math.abs(v.s - Math.round(v.s)) < 1e-6;
+    gl.uniform3f(U.uXf, v.s, whole ? Math.round(v.tx) : v.tx, whole ? Math.round(v.ty) : v.ty);
     gl.uniform1f(U.uCanvasH, ch);
     gl.uniform1f(U.uBoost, S.boost);
     gl.uniform1i(U.uStyle, S.style);
