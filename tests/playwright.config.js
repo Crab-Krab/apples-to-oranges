@@ -19,4 +19,12 @@ module.exports = defineConfig({
     viewport: { width: 1280, height: 720 },
     trace: 'off',
   },
+  // The full-speed tests play two 60 fps videos as fast as the machine
+  // allows. They run on their own, after everything else, so the load they
+  // put on the machine cannot disturb timing-sensitive tests such as
+  // frame-rate detection.
+  projects: [
+    { name: 'main', testIgnore: 'fullspeed.spec.js' },
+    { name: 'full speed', testMatch: 'fullspeed.spec.js', dependencies: ['main'] },
+  ],
 });

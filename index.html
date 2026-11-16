@@ -433,7 +433,7 @@ function makeSlot() {
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
     tex: null, texValid: false, dirty: 0, pendingSeek: null, token: 0,
-    presented: null, rvfcArmed: false,
+    presented: null, texTime: null, rvfcArmed: false,
   };
   v.addEventListener('loadedmetadata', () => onMeta(sl));
   v.addEventListener('durationchange', () => {
@@ -751,7 +751,7 @@ function loadFile(i, file) {
     file, url: URL.createObjectURL(file), codec: null, codecHint: null,
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
-    texValid: false, pendingSeek: null, presented: null,
+    texValid: false, pendingSeek: null, presented: null, texTime: null,
   });
   sl.video.src = sl.url;
   renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
@@ -959,6 +959,17 @@ function frameCount() {
 }
 const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
 
+// The time of the frame on screen during playback. Best is the time of the
+// picture we last drew (texTime). Next best is the last frame the browser
+// reported (presented), which at 60 fps can be one frame older than the
+// picture. The video's own clock is the fallback. A time far from the
+// clock is left over from before a jump and is ignored.
+function timeOnScreen(sl) {
+  const now = sl.video.currentTime;
+  for (const t of [sl.texTime, sl.presented]) if (t !== null && Math.abs(t - now) < 0.5) return t;
+  return now;
+}
+
 // Seek to the middle of a frame. Seeking to its exact start can land on
 // the previous frame because of rounding, the middle is always safe.
 function frameMid(sl, n) {
@@ -1040,8 +1051,7 @@ function pause() {
   a.video.pause();
   B().video.pause();
   // Snap both videos to the frame that was on screen.
-  const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
-  seekAll(frameAt(t, fpsOf(a)));
+  seekAll(frameAt(timeOnScreen(a), fpsOf(a)));
   updatePlayIcon();
 }
 
@@ -1142,11 +1152,9 @@ function updateTimeUI() {
   const fa = fpsOf(a);
   let n, m;
   if (S.playing) {
-    const t = a.presented !== null && Math.abs(a.presented - a.video.currentTime) < 0.5 ? a.presented : a.video.currentTime;
-    n = Math.min(frameAt(t, fa), frameCount() - 1);
+    n = Math.min(frameAt(timeOnScreen(a), fa), frameCount() - 1);
     if (b.ready) {
-      const tb = b.presented !== null && Math.abs(b.presented - b.video.currentTime) < 0.5 ? b.presented : b.video.currentTime;
-      m = frameAt(tb, fpsOf(b));
+      m = frameAt(timeOnScreen(b), fpsOf(b));
     }
   } else {
     n = S.frame;
@@ -1262,13 +1270,41 @@ function makeTex() {
   return t;
 }
 
+// The time stamp of the frame the video is showing right now, in seconds,
+// or null if the browser cannot tell us. A VideoFrame is a snapshot of
+// the current picture together with its time stamp.
+const HAS_VIDEOFRAME = typeof VideoFrame === 'function';
+function frameStamp(v) {
+  if (!HAS_VIDEOFRAME) return null;
+  try {
+    const f = new VideoFrame(v);
+    const t = f.timestamp;
+    f.close();
+    return typeof t === 'number' ? t / 1e6 : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 let uploadErrorShown = false;
 function uploadTex(sl) {
   const v = sl.video;
   if (!gl || v.readyState < 2 || !v.videoWidth) return false;
   gl.bindTexture(gl.TEXTURE_2D, sl.tex);
   try {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+    // Record which frame ends up in the texture. During playback the video
+    // can move to its next frame at any moment, even between two lines of
+    // code, so the time stamp is read just before and just after the copy.
+    // If both agree, the copied picture is that frame. If they differ, a
+    // new frame arrived during the copy: copy again (rarely needed twice).
+    let before = frameStamp(v), after = null;
+    for (let tries = 0; tries < 3; tries++) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+      after = frameStamp(v);
+      if (before === after) break;
+      before = after;
+    }
+    sl.texTime = before !== null && before === after ? before : null;
     sl.texValid = true;
     return true;
   } catch (e) {
@@ -1425,7 +1461,7 @@ function fatal(msg) {
 // The main loop runs once per screen refresh.
 function loop() {
   requestAnimationFrame(loop);
-  if (S.playing) { syncStep(); updateTimeUI(); }
+  if (S.playing) syncStep();
   let uploaded = false;
   for (const sl of S.slots) {
     if (!sl.ready) continue;
@@ -1434,6 +1470,8 @@ function loop() {
       if (sl.dirty > 0) sl.dirty--;
     }
   }
+  // After the copy, so the frame number matches the picture drawn below.
+  if (S.playing) updateTimeUI();
   if (uploaded || S.needsRender) { S.needsRender = false; draw(); }
   // Show a "Decoding…" badge while a jump to a new frame is still in progress,
   // so the picture is never mistaken for the frame number shown below.
