@@ -2,6 +2,8 @@
 
 Compare an original video with an encoded (compressed) copy of it, frame by frame, in your web browser.
 
+**Use it online: https://crab-krab.github.io/apples-to-oranges/**
+
 It is a single web page (`index.html`). There is nothing to install and no account to make. **Your videos never leave your computer.** The page opens them directly from your disk and uploads nothing.
 
 ## What it does
@@ -20,7 +22,7 @@ It is a single web page (`index.html`). There is nothing to install and no accou
 ### Open the tool
 
 - **On your own computer:** download `index.html` and double-click it. It opens in your default browser.
-- **Online:** if it's published with GitHub Pages (see below), just visit the page.
+- **Online:** visit https://crab-krab.github.io/apples-to-oranges/
 
 ### Load your videos
 
