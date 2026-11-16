@@ -153,7 +153,7 @@ Even when hosted online, videos are still opened only on the visitor's own compu
 
 ## License
 
-Copyright (C) 2026 the Apples to Oranges authors.
+Copyright (C) 2026 Crab-Krab.
 
 This program is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public License, version 3** (or, at your option, any later version), as published by the Free Software Foundation. See [`LICENSE`](LICENSE) for the full text.
 
