@@ -128,6 +128,10 @@ The automatic frame-rate measurement uses a browser feature called `requestVideo
 - **A smaller encode is upscaled with simple smoothing (bilinear).** Video players often use sharper upscaling, so some of the difference you see in that case comes from the upscaling itself, not just the compression.
 - **Jumping to a frame can take a moment** with some files, especially high-quality originals that have few "keyframes". A keyframe is a complete picture the decoder can start from, and other frames must be rebuilt from the nearest one. A small **"Decoding…"** badge appears in the bottom-left corner until both pictures are ready.
 - **Variable frame rate** videos (common from phones and screen recorders) have no single frame rate. Frame numbers are then approximate, but pausing still shows the two videos at the same moment.
+- **Frame numbers depend on the frame rate.** The tool measures each file's rate by briefly playing it. If the reading is wrong (you'll see a "Frame rates differ" warning between two files you know match, for example), pick the correct rate in that file's **Frame rate** menu.
+- **Damaged or cut-off files** can show the last picture the browser could decode under a later frame number. The same can happen when a file's audio runs longer than its video.
+- **"1:1" is exact in Chrome and Edge.** Browsers that don't report the screen area's exact pixel size, possibly Safari, fall back to an estimate. At some window sizes that can be one pixel off, which softens the 1:1 view slightly.
+- **Tested mainly in Chromium.** Automated tests run in Chromium only. Firefox and Safari use different video decoders and timing, so frame accuracy there is less thoroughly checked.
 
 ## Publishing it on GitHub Pages
 
@@ -168,6 +172,7 @@ On Linux, use `npx playwright install --with-deps chromium` if the browser is mi
 
 - **No videos are stored in the repository.** The first run makes its test clips with ffmpeg and keeps them in `tests/.media/`. Every frame of a clip has its own frame number painted on it as a row of black and white stripes, so a test can read back exactly which frame is on screen.
 - **What is checked:** the page loads without errors and contacts nothing on the network, paused frame accuracy (random jumps, single steps, rapid scrubbing, encode offset), frame-rate detection, pausing (in slow motion and at full speed), that the frame counter matches the picture during 60 fps playback, the Difference view, that the 1:1 view is pixel-exact (at 100% and 150% screen scaling), codec labels, and that a hostile file name is shown as plain text.
+- **Changing the tool:** keep `index.html` a single self-contained file (no libraries, no build step), so it still works when double-clicked. Run the tests before and after a change.
 - GitHub runs the same tests on every push and pull request (see `.github/workflows/test.yml`).
 
 ## License
