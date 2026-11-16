@@ -167,8 +167,7 @@ npm test
 On Linux, use `npx playwright install --with-deps chromium` if the browser is missing system libraries.
 
 - **No videos are stored in the repository.** The first run makes its test clips with ffmpeg and keeps them in `tests/.media/`. Every frame of a clip has its own frame number painted on it as a row of black and white stripes, so a test can read back exactly which frame is on screen.
-- **What is checked:** the page loads without errors and contacts nothing on the network, paused frame accuracy (random jumps, single steps, rapid scrubbing, encode offset), frame-rate detection, pausing (in slow motion and at full speed), that the frame counter matches the picture during 60 fps playback, the Difference view, codec labels, and that a hostile file name is shown as plain text.
-- **One known bug is recorded as an expected failure.** With a WebM or MKV file as the Original, pausing can land one frame early. The three tests for it in `tests/pause.spec.js` are listed with a ✘ and the words "known bug, expected to fail", and are counted as passed. Once the bug is fixed they will be reported as "Expected to fail, but passed" until `PAUSE_BUG_IS_FIXED` in that file is set to `true`.
+- **What is checked:** the page loads without errors and contacts nothing on the network, paused frame accuracy (random jumps, single steps, rapid scrubbing, encode offset), frame-rate detection, pausing (in slow motion and at full speed), that the frame counter matches the picture during 60 fps playback, the Difference view, that the 1:1 view is pixel-exact (at 100% and 150% screen scaling), codec labels, and that a hostile file name is shown as plain text.
 - GitHub runs the same tests on every push and pull request (see `.github/workflows/test.yml`).
 
 ## License
