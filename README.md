@@ -162,17 +162,6 @@ On Linux, use `npx playwright install --with-deps chromium` if the browser is mi
 - **Changing the tool:** keep `index.html` a single self-contained file (no libraries, no build step), so it still works when double-clicked. Run the tests before and after a change.
 - GitHub runs the same tests on every push and pull request (see `.github/workflows/test.yml`).
 
-## Making a release
-
-Releases are made by GitHub itself, using `.github/workflows/release.yml`:
-
-1. Add the release notes as `release-notes/vX.Y.md` (for example `release-notes/v1.1.md`) through a pull request, and merge it.
-2. Wait for the tests on `main` to pass.
-3. Open **Actions → Release → Run workflow**, enter the version (for example `v1.1`) and leave **Publish** unticked. This rehearsal runs every check and creates nothing.
-4. Run it again with **Publish** ticked. GitHub creates the tag and the release, with `index.html` attached as a download.
-
-The workflow refuses to release anything but `main`, a version that already exists, a commit whose tests haven't passed, or a version without notes.
-
 ## License
 
 Copyright (C) 2026 Crab-Krab.
