@@ -438,6 +438,9 @@ function makeSlot() {
     w: 0, h: 0, duration: 0, ready: false, error: null,
     tex: null, texValid: false, dirty: 0, pendingSeek: null, token: 0,
     presented: null, texTime: null, rvfcArmed: false, mismatch: null,
+    // Jump counter: goes up every time the page moves the video. A frame
+    // time is only trusted if it was recorded after the latest jump.
+    jumps: 0, texJump: -1, presentedJump: -1,
   };
   v.addEventListener('loadedmetadata', () => onMeta(sl));
   v.addEventListener('durationchange', () => {
@@ -464,6 +467,7 @@ function armRVFC(sl) {
   sl.video.requestVideoFrameCallback((now, md) => {
     sl.rvfcArmed = false;
     sl.presented = md.mediaTime;
+    sl.presentedJump = sl.video.seeking ? -1 : sl.jumps;
     sl.dirty = Math.max(sl.dirty, 1);
     requestRender();
     armRVFC(sl);
@@ -1042,15 +1046,19 @@ const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
 // The frame number on screen during playback. Best is the time of the
 // picture we last drew (texTime). Next best is the last frame the browser
 // reported (presented), which at 60 fps can be one frame older than the
-// picture. The video's own clock is the fallback. A time far from the
-// clock is left over from before a jump and is ignored.
+// picture. The video's own clock is the fallback. A time recorded before
+// the latest jump is ignored.
 // texTime and presented are the START times of frames. WebM and MKV store those in whole
 // milliseconds (frame 7 at 30 fps is 0.233 s, and 0.233 x 30 = 6.99), so
 // they are rounded to the nearest frame. The video clock can be anywhere
 // inside a frame, so it is rounded down.
 function frameOnScreen(sl) {
   const now = sl.video.currentTime, fps = fpsOf(sl);
-  for (const t of [sl.texTime, sl.presented]) if (t !== null && Math.abs(t - now) < 0.5) return Math.max(0, Math.round(t * fps));
+  // Trust a frame time only if it was recorded after the latest jump, however
+  // old it is: on a busy machine the drawing can lag the video's clock by
+  // more than half a second, and the picture on screen is what counts.
+  if (sl.texTime !== null && sl.texJump === sl.jumps) return Math.max(0, Math.round(sl.texTime * fps));
+  if (sl.presented !== null && sl.presentedJump === sl.jumps) return Math.max(0, Math.round(sl.presented * fps));
   return frameAt(now, fps);
 }
 
@@ -1083,18 +1091,24 @@ function seekAll(n) {
 // Seek "throttling": if a video is still busy with the previous seek, we
 // remember only the newest target and jump there once it finishes. This
 // keeps scrubbing smooth instead of queuing up hundreds of seeks.
+// Every change of a video's position goes through here, so the jump
+// counter always knows which frame times are out of date.
+function setPosition(sl, t) {
+  sl.jumps++;
+  sl.video.currentTime = t;
+}
 function requestSeek(sl, t) {
   const v = sl.video;
   if (v.seeking) { sl.pendingSeek = t; return; }
   sl.pendingSeek = null;
   if (Math.abs(v.currentTime - t) < 1e-6 && v.readyState >= 2) { sl.dirty = 2; requestRender(); return; }
-  v.currentTime = t;
+  setPosition(sl, t);
 }
 function onSeeked(sl) {
   if (sl.pendingSeek !== null) {
     const t = sl.pendingSeek;
     sl.pendingSeek = null;
-    sl.video.currentTime = t;
+    setPosition(sl, t);
   }
   sl.dirty = 2;
   requestRender();
@@ -1162,17 +1176,17 @@ function syncStep() {
   if (target < 0 || target >= (b.duration || Infinity)) {
     // The Encoded video has nothing to show at this moment (offset or shorter file).
     if (!vb.paused) vb.pause();
-    if (target < 0 && vb.currentTime > 0.001) vb.currentTime = 0;
+    if (target < 0 && vb.currentTime > 0.001) setPosition(b, 0);
     return;
   }
-  if (vb.paused) { vb.currentTime = target; vb.playbackRate = S.speed; vb.play().catch(() => {}); return; }
+  if (vb.paused) { setPosition(b, target); vb.playbackRate = S.speed; vb.play().catch(() => {}); return; }
   // Drift is measured in video time, then converted to real time so the
   // correction behaves the same at 0.1x as at 2x.
   const drift = vb.currentTime - target; // positive = Encoded is ahead
   const driftReal = drift / S.speed;
   const hardLimit = Math.max(HARD_DRIFT, 1 / fpsOf(b) / S.speed); // never less than one frame
   if (Math.abs(driftReal) > hardLimit) {
-    vb.currentTime = target + 0.02 * S.speed; // small lead covers the time the jump takes
+    setPosition(b, target + 0.02 * S.speed); // small lead covers the time the jump takes
     vb.playbackRate = S.speed;
     return;
   }
@@ -1206,7 +1220,7 @@ function setOffset(o) {
     const a = A(), b = B();
     if (b.ready) {
       const t = a.video.currentTime + S.offset / fpsOf(b);
-      if (t >= 0) b.video.currentTime = t;
+      if (t >= 0) setPosition(b, t);
     }
   } else {
     seekAll(S.frame);
@@ -1422,6 +1436,7 @@ function uploadTex(sl) {
       before = after;
     }
     sl.texTime = before !== null && before === after ? before : null;
+    sl.texJump = v.seeking ? -1 : sl.jumps;
     sl.texValid = true;
     return true;
   } catch (e) {
@@ -1627,7 +1642,7 @@ function loop() {
 function verifyShownFrames() {
   let changed = false;
   for (const [i, sl] of S.slots.entries()) {
-    if (!sl.ready || sl.dirty > 0 || sl.detecting || sl.texTime === null) continue;
+    if (!sl.ready || sl.dirty > 0 || sl.detecting || sl.texTime === null || sl.texJump !== sl.jumps) continue;
     const fps = fpsOf(sl);
     const want = i === 0 ? S.frame : S.encFrame;
     let result = null;

@@ -25,7 +25,7 @@
  * frame number as the counters do.
  */
 
-const { test, expect, loadPair, seek } = require('./support/app');
+const { test, expect, loadPair, seek, report } = require('./support/app');
 const { barcode } = require('./support/clips');
 
 const clip = barcode['60'].mp4;
@@ -94,10 +94,49 @@ test.describe('Full speed playback, 60 fps', () => {
       }), 8 + ((i * 13) % 30));
       const after = await page.evaluate(() => window.__t.report());
       if (after.shown[0] !== onScreen || after.shown[1] !== onScreen) {
+        // Include what the page itself believed, so a rare failure on a
+        // shared test machine says which side went wrong.
         missed.push('frame ' + onScreen + ' was drawn, but pausing landed on frame ' +
-          after.shown[0] + ' (Original) and ' + after.shown[1] + ' (Encoded)');
+          after.shown[0] + ' (Original) and ' + after.shown[1] + ' (Encoded). The page asked for ' +
+          after.frame + ' and ' + after.encFrame + '.');
       }
     }
     expect(missed, PAUSES + ' pauses at full speed').toEqual([]);
   });
+});
+
+// On a busy machine the drawing can fall behind the video's own clock. The
+// page used to trust the drawn picture's frame number only if it was less
+// than half a second behind the clock, and otherwise paused on the clock's
+// frame, a frame the viewer had never seen. Here the page is frozen for 0.8
+// seconds during playback (the video's clock keeps running while nothing is
+// drawn) and then paused straight away. It must land on the frame that was
+// on screen, not on the clock's.
+test('pausing after the drawing fell behind lands on the frame on screen', async ({ page }) => {
+  const clip30 = barcode['30'].mp4;
+  await loadPair(page, clip30, clip30);
+  for (const start of [10, 60]) {
+    await seek(page, start);
+    const onScreen = await page.evaluate(() => new Promise((resolve) => {
+      const T = window.__t, a = window.__a2o;
+      let k = 0;
+      const each = () => {
+        if (++k >= 10) {
+          const drawn = T.frameDrawn(0);
+          const until = performance.now() + 800;
+          while (performance.now() < until) { /* the page is frozen */ }
+          a.pause();
+          resolve(drawn);
+          return;
+        }
+        a.S.needsRender = true;
+        requestAnimationFrame(each);
+      };
+      a.play();
+      a.S.needsRender = true;
+      requestAnimationFrame(each);
+    }));
+    const after = await report(page);
+    expect(after.shown, 'frame ' + onScreen + ' was on screen when paused').toEqual([onScreen, onScreen]);
+  }
 });
