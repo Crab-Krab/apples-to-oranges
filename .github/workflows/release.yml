@@ -1,0 +1,92 @@
+name: Release
+
+# Publishes a GitHub release of the current main branch, with index.html
+# attached as a download. Started by hand (Actions tab -> Release -> Run
+# workflow), or by Claude through the GitHub tools.
+#
+# Leave "publish" unticked for a rehearsal: every check runs, nothing is
+# created. Tick it to publish.
+#
+# Before running, add the release notes as release-notes/<version>.md on main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example v1.0 or v1.0.1"
+        required: true
+        type: string
+      publish:
+        description: "Publish the release (leave unticked for a rehearsal)"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the tag and the release
+  actions: read   # check that the tests passed
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # all tags, to check the version is new
+
+      - name: Check the request
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are made from main only (this run is on $GITHUB_REF)."; exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::The version must look like v1.0 or v1.0.1, not \"$VERSION\"."; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+            echo "::error::$VERSION already exists. Pick a new version."; exit 1
+          fi
+          if [ ! -s "release-notes/$VERSION.md" ]; then
+            echo "::error::release-notes/$VERSION.md is missing or empty."; exit 1
+          fi
+          if ! tail -n 3 index.html | grep -q '</html>'; then
+            echo "::error::index.html looks incomplete (no closing </html>)."; exit 1
+          fi
+          echo "Version $VERSION, commit $(git rev-parse --short HEAD), notes found."
+
+      - name: Check the tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          result="$(gh run list --workflow test.yml --commit "$sha" --event push --json conclusion --jq '.[0].conclusion')"
+          echo "Tests on $sha: ${result:-not run}"
+          if [ "$result" != "success" ]; then
+            echo "::error::The Tests workflow has not passed on this commit yet. Wait for it, then run the release again."; exit 1
+          fi
+
+      - name: Publish the release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "$VERSION" index.html \
+            --target "$(git rev-parse HEAD)" \
+            --title "Apples to Oranges $VERSION" \
+            --notes-file "release-notes/$VERSION.md" \
+            --latest
+          gh release view "$VERSION" --json url,assets --jq '"Published: " + .url + " (" + (.assets | length | tostring) + " download)"'
+
+      - name: Rehearsal finished
+        if: ${{ !inputs.publish }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: echo "Rehearsal only. All checks passed, nothing was created. Run again with publish ticked to release $VERSION."
