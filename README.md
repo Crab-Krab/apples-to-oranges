@@ -133,20 +133,6 @@ The automatic frame-rate measurement uses a browser feature called `requestVideo
 - **"1:1" is exact in Chrome and Edge.** Browsers that don't report the screen area's exact pixel size, possibly Safari, fall back to an estimate. At some window sizes that can be one pixel off, which softens the 1:1 view slightly.
 - **Tested mainly in Chromium.** Automated tests run in Chromium only. Firefox and Safari use different video decoders and timing, so frame accuracy there is less thoroughly checked.
 
-## Publishing it on GitHub Pages
-
-GitHub Pages is GitHub's free website hosting. It turns this repository into a public web page.
-
-1. Create a new repository on GitHub and upload these files (or push this git repository to it).
-2. In the repository, open **Settings → Pages**.
-3. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
-4. Choose the **main** branch and the **/ (root)** folder, then click **Save**.
-5. After a minute or two, the page will be live at `https://YOUR-USERNAME.github.io/REPOSITORY-NAME/`.
-
-Official guide: [Configuring a publishing source for your GitHub Pages site](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
-
-Even when hosted online, videos are still opened only on the visitor's own computer. GitHub never receives them.
-
 ## How it works (for the curious)
 
 - Each file is opened with `URL.createObjectURL`, which gives the page a private link to the file on your disk.
