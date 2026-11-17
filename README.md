@@ -152,6 +152,7 @@ Even when hosted online, videos are still opened only on the visitor's own compu
 - Each file is opened with `URL.createObjectURL`, which gives the page a private link to the file on your disk.
 - Two hidden `<video>` elements decode the files. Each new frame is copied to the graphics card, and one small WebGL program draws all three views, so every view uses the same zoom, pan and colors.
 - To land on an exact frame, the tool seeks to the **middle** of that frame's time slot. Seeking to its exact start could land on the previous frame because of rounding.
+- Frames are counted from each file's **first frame**, which isn't always at 0 seconds. MKV files remuxed from DVDs, for example, often start a fraction of a frame late. The tool reads the first frame's time stamp when the file opens, so such a file still pairs correctly with one that starts at 0.
 - While you scrub, the tool remembers only the latest position you asked for. It jumps there once the previous jump finishes, so the slider stays responsive.
 - During playback, the Encoded video's speed is nudged up to 12% faster or slower to close small timing gaps. It only jumps when it drifts by more than about 0.3 seconds.
 

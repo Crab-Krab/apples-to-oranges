@@ -166,9 +166,18 @@ const dotsClip = (name, withDots) => ({
 });
 const dots = { plain: dotsClip('dots-none', false), dotted: dotsClip('dots-every-16px', true), step: DOT_STEP, count: 120 * 67 };
 
+// The 30 fps barcode clip, but stored so its first frame starts at 0.021 s
+// instead of 0, as MKV files remuxed from DVDs often do. The tool used to
+// count frames from 0 s, so it landed one frame early on such files.
+const delayed = barcodeClip(RATES[1], CONTAINERS[1], { name: 'barcode-30fps-starts-late' });
+delayed.args = [...delayed.args, '-output_ts_offset', '0.021'];
+delayed.title = '30 fps WebM starting at 0.021 s';
+delayed.start = 0.021;
+
 const allClips = [
   ...RATES.flatMap((rate) => CONTAINERS.map((container) => barcode[rate.label][container.ext])),
   lossy,
+  delayed,
   checker,
   fast,
   dots.plain,
@@ -176,4 +185,4 @@ const allClips = [
   ...codecs,
 ];
 
-module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, checker, fast, dots, codecs, allClips };
+module.exports = { MEDIA_DIR, RATES, CONTAINERS, barcode, lossy, delayed, checker, fast, dots, codecs, allClips };

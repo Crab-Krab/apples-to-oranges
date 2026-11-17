@@ -441,6 +441,7 @@ function makeSlot() {
     // Jump counter: goes up every time the page moves the video. A frame
     // time is only trusted if it was recorded after the latest jump.
     jumps: 0, texJump: -1, presentedJump: -1,
+    start: 0, // time of the first frame in seconds (see probeFps)
   };
   v.addEventListener('loadedmetadata', () => onMeta(sl));
   v.addEventListener('durationchange', () => {
@@ -674,9 +675,11 @@ async function sniffCodec(file) {
    --------------------------------------------------------------------- */
 // `rate` is the playback speed, `minFrames` and `minSpan` (seconds of
 // video) say when enough frames have been seen.
+// Resolves to { fps, start }: the measured rate (or null) and the first
+// frame's time in seconds (or null if the browser can't say).
 function probeFps(url, rate = 0.5, minFrames = 45, minSpan = 1, timeoutMs = 4000) {
   return new Promise((resolve) => {
-    if (!HAS_RVFC) return resolve(null);
+    if (!HAS_RVFC) return resolve({ fps: null, start: null });
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto';
     vidhost.appendChild(v);
@@ -688,7 +691,7 @@ function probeFps(url, rate = 0.5, minFrames = 45, minSpan = 1, timeoutMs = 4000
       clearTimeout(timer);
       try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
       v.remove();
-      resolve(estimateFps(times));
+      resolve({ fps: estimateFps(times), start });
     };
     const timer = setTimeout(finish, timeoutMs);
     // Collect at least 45 frames covering at least 1 second of video. WebM
@@ -701,9 +704,16 @@ function probeFps(url, rate = 0.5, minFrames = 45, minSpan = 1, timeoutMs = 4000
     };
     v.addEventListener('ended', finish);
     v.addEventListener('error', finish);
+    // The first frame's time stamp, read before playback starts. Many files
+    // don't start at exactly 0 s (MKV files remuxed from DVDs often start a
+    // fraction of a frame later), and frame numbers must count from there.
+    let start = null;
     v.addEventListener('loadedmetadata', () => {
       v.playbackRate = rate; // slower than real time makes it less likely the screen skips frames
       v.requestVideoFrameCallback(cb);
+    }, { once: true });
+    v.addEventListener('loadeddata', () => {
+      start = frameStamp(v);
       v.play().catch(finish);
     }, { once: true });
     v.src = url;
@@ -800,7 +810,7 @@ function loadFile(i, file) {
     file, url: URL.createObjectURL(file), codec: null, codecHint: null,
     autoFps: null, manualFps: null, detecting: false, fpsFailed: false,
     w: 0, h: 0, duration: 0, ready: false, error: null,
-    texValid: false, pendingSeek: null, presented: null, texTime: null, mismatch: null,
+    texValid: false, pendingSeek: null, presented: null, texTime: null, mismatch: null, start: 0,
   });
   sl.video.src = sl.url;
   renderSlots(); updateWarnings(); updateScrubRange(); requestRender();
@@ -841,7 +851,10 @@ async function detectFps(sl) {
   const token = sl.token;
   sl.detecting = true;
   renderSlots();
-  let fps = await probeFps(sl.url);
+  const first = await probeFps(sl.url);
+  let fps = first.fps;
+  // Accept a plausible start time only. Without VideoFrame it stays 0.
+  const start = first.start !== null && isFinite(first.start) && Math.abs(first.start) < 10 ? first.start : 0;
   // At half speed a 240 fps video still shows 120 frames a second, more than
   // a 60 Hz screen can present. The browser then reports every second frame
   // and the rate looks halved. If frames came faster than about 40 a second,
@@ -850,13 +863,14 @@ async function detectFps(sl) {
   if (fps && token === sl.token && fps * 0.5 > 40) {
     const slow = Math.max(1 / 32, 10 / fps);
     const again = await probeFps(sl.url, slow, 45, 0.15, 12000);
-    if (again) fps = again;
+    if (again.fps) fps = again.fps;
   }
   if (token !== sl.token) return;
   changeFps(sl, () => {
     sl.detecting = false;
     sl.autoFps = fps;
     sl.fpsFailed = !fps;
+    sl.start = start;
   });
 }
 
@@ -1039,7 +1053,7 @@ function updateWarnings() {
 function frameCount() {
   const a = A();
   if (!a.ready || !a.duration) return 1;
-  return Math.max(1, Math.round(a.duration * fpsOf(a)));
+  return Math.max(1, Math.round((a.duration - a.start) * fpsOf(a)));
 }
 const frameAt = (t, fps) => Math.max(0, Math.floor(t * fps + 1e-4));
 
@@ -1057,15 +1071,16 @@ function frameOnScreen(sl) {
   // Trust a frame time only if it was recorded after the latest jump, however
   // old it is: on a busy machine the drawing can lag the video's clock by
   // more than half a second, and the picture on screen is what counts.
-  if (sl.texTime !== null && sl.texJump === sl.jumps) return Math.max(0, Math.round(sl.texTime * fps));
-  if (sl.presented !== null && sl.presentedJump === sl.jumps) return Math.max(0, Math.round(sl.presented * fps));
-  return frameAt(now, fps);
+  if (sl.texTime !== null && sl.texJump === sl.jumps) return Math.max(0, Math.round((sl.texTime - sl.start) * fps));
+  if (sl.presented !== null && sl.presentedJump === sl.jumps) return Math.max(0, Math.round((sl.presented - sl.start) * fps));
+  return frameAt(now - sl.start, fps);
 }
 
 // Seek to the middle of a frame. Seeking to its exact start can land on
 // the previous frame because of rounding, the middle is always safe.
+// Frame n starts n frames after the first frame, which is at sl.start.
 function frameMid(sl, n) {
-  const t = (n + 0.5) / fpsOf(sl);
+  const t = sl.start + (n + 0.5) / fpsOf(sl);
   return clamp(t, 0, Math.max(0, (sl.duration || t + 1) - 0.001));
 }
 
@@ -1136,8 +1151,8 @@ function play() {
     if (pa) pa.catch((e) => { if (S.playing && e.name !== 'AbortError') { S.playing = false; updatePlayIcon(); toast('Playback could not start: ' + e.message); } });
     if (b.ready) {
       b.video.playbackRate = S.speed;
-      const target = a.video.currentTime + S.offset / fpsOf(b);
-      if (target >= 0 && target < (b.duration || Infinity)) b.video.play().catch(() => {});
+      const { rel, target } = encodedTarget();
+      if (rel >= 0 && target < (b.duration || Infinity)) b.video.play().catch(() => {});
     }
   };
   go();
@@ -1167,16 +1182,26 @@ function updatePlayIcon() {
 }
 
 const HARD_DRIFT = 0.3; // seconds of real (wall-clock) time. Beyond this the Encoded video jumps.
+// Where the Encoded video should be, given where the Original is. Both are
+// measured from their own first frame (sl.start), so two files that start at
+// slightly different times still line up. `rel` below 0 means the Encoded
+// has nothing to show yet.
+function encodedTarget() {
+  const a = A(), b = B();
+  const rel = (a.video.currentTime - a.start) + S.offset / fpsOf(b);
+  return { rel, target: b.start + rel };
+}
+
 function syncStep() {
   const a = A(), b = B();
   if (!a.ready || !b.ready) return;
   const va = a.video, vb = b.video;
   if (va.paused || va.seeking || vb.seeking) return;
-  const target = va.currentTime + S.offset / fpsOf(b);
-  if (target < 0 || target >= (b.duration || Infinity)) {
+  const { rel, target } = encodedTarget();
+  if (rel < 0 || target >= (b.duration || Infinity)) {
     // The Encoded video has nothing to show at this moment (offset or shorter file).
     if (!vb.paused) vb.pause();
-    if (target < 0 && vb.currentTime > 0.001) setPosition(b, 0);
+    if (rel < 0 && vb.currentTime > 0.001) setPosition(b, 0);
     return;
   }
   if (vb.paused) { setPosition(b, target); vb.playbackRate = S.speed; vb.play().catch(() => {}); return; }
@@ -1219,8 +1244,8 @@ function setOffset(o) {
   if (S.playing) {
     const a = A(), b = B();
     if (b.ready) {
-      const t = a.video.currentTime + S.offset / fpsOf(b);
-      if (t >= 0) setPosition(b, t);
+      const { rel, target } = encodedTarget();
+      if (rel >= 0) setPosition(b, target);
     }
   } else {
     seekAll(S.frame);
@@ -1648,8 +1673,8 @@ function verifyShownFrames() {
     let result = null;
     // Skip Encoded frames before its start or past its end (an offset, or a
     // shorter file): there is nothing to show there, and other warnings cover it.
-    if (want >= 0 && want < Math.round(sl.duration * fps)) {
-      const got = Math.max(0, Math.round(sl.texTime * fps));
+    if (want >= 0 && want < Math.round((sl.duration - sl.start) * fps)) {
+      const got = Math.max(0, Math.round((sl.texTime - sl.start) * fps));
       if (got !== want) result = { want, got };
     }
     const old = sl.mismatch;
