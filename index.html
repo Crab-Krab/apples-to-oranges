@@ -133,13 +133,15 @@
   }
   .label small { font-weight: 400; color: #bbb; margin-left: 6px; }
   #divider { position: absolute; top: 0; bottom: 0; width: 0; z-index: 2; pointer-events: none; display: none; }
-  #divider::before { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: rgba(235,235,235,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.45); }
+  /* The line is an even number of screen pixels wide (--line-w, set from
+     script), centred on the split, so it covers the same number of pixels
+     on each side. The knob is opaque so the video can't tint one half. */
+  #divider::before { content: ""; position: absolute; top: 0; bottom: 0; width: var(--line-w, 2px); left: calc(var(--line-w, 2px) / -2); background: #ebebeb; box-shadow: 0 0 0 1px rgba(0,0,0,.45); }
   #divider .knob {
-    position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%);
-    width: 28px; height: 28px; border-radius: 50%;
-    background: rgba(235,235,235,.95); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
-    display: grid; place-items: center; color: #222; font-size: 13px; font-weight: 700;
+    position: absolute; top: 50%; left: -14px; width: 28px; height: 28px; margin-top: -14px; border-radius: 50%;
+    background: #ebebeb; box-shadow: 0 0 0 1px rgba(0,0,0,.5);
   }
+  #divider .knob svg { display: block; }
   #zoomInfo {
     position: absolute; right: 10px; bottom: 10px; z-index: 3;
     background: rgba(20,20,20,.78); color: #ddd; padding: 2px 8px; border-radius: 4px;
@@ -253,7 +255,7 @@
 <main id="viewer">
   <div id="vidhost" aria-hidden="true"></div>
   <canvas id="gl" aria-label="Video comparison view"></canvas>
-  <div id="divider"><div class="knob">⇔</div></div>
+  <div id="divider"><div class="knob"><svg viewBox="-14 -14 28 28" width="28" height="28" aria-hidden="true"><path d="M-4 -5 -9 0 -4 5M4 -5 9 0 4 5M-8.5 0H8.5" fill="none" stroke="#222" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div>
   <div class="label" id="labA" hidden></div>
   <div class="label" id="labB" hidden></div>
   <div class="label" id="labD" hidden></div>
@@ -1582,7 +1584,7 @@ function draw() {
       gl.viewport(p.x, ch - p.y - p.h, p.w, p.h);
       gl.uniform4f(U.uPane, p.x, p.y, p.w, p.h);
       gl.uniform1i(U.uMode, p.src);
-      gl.uniform1f(U.uSplit, S.wipe * p.w);
+      gl.uniform1f(U.uSplit, Math.round(S.wipe * p.w));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
   }
@@ -1607,9 +1609,12 @@ function updateOverlays(L) {
       labB.style.left = (pb.x / r + 8) + 'px'; labB.style.top = (pb.y / r + 8) + 'px';
       labA.hidden = labB.hidden = false;
     } else if (S.mode === 'wipe') {
-      const x = S.wipe * L.pw / r;
+      // The split is snapped to a whole screen pixel (the video's split in
+      // draw() uses the same rounding), so line, knob and picture agree.
+      const x = Math.round(S.wipe * L.pw) / r;
       div.style.display = 'block';
       div.style.left = x + 'px';
+      div.style.setProperty('--line-w', (2 * Math.max(1, Math.round(r))) / r + 'px');
       labA.innerHTML = '◀ ' + nameA; labB.innerHTML = nameB + ' ▶';
       labA.style.left = (x - 10) + 'px'; labA.style.top = '8px'; labA.style.transform = 'translateX(-100%)';
       labB.style.left = (x + 10) + 'px'; labB.style.top = '8px'; labB.style.transform = '';
